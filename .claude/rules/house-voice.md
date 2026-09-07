@@ -1,8 +1,10 @@
 # House voice
 
-Loaded every turn. Adapted from `pstack/unslop` (MIT). What was dropped and why
-is in `kit/dsi-toolbox/rules/ATTRIBUTION.md`, which is deliberately NOT beside
-the installed copy: every `.md` in `.claude/rules/` is loaded at launch, so an
+Loaded every turn. Adapted from `pstack/unslop` (MIT). The upstream licence and
+what was dropped are in the **Pathforward** repository, at
+`kit/dsi-toolbox/rules/` beside the copy of this file every other repository is
+installed from — `ATTRIBUTION.md` and `LICENSE`, deliberately NOT beside the
+installed copy: every `.md` in `.claude/rules/` is loaded at launch, so an
 attribution file living there would cost context on every turn to explain a file
 nobody is reading at the time.
 
