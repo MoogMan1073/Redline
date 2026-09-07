@@ -629,6 +629,115 @@ luck — they change a length — and the arm that edits the *instrument* is the
 one nobody thinks to protect, which is the same shape as the snapshot rule one
 line over: it is the instrument rather than the subject.
 
+## ...and then printing, which is a subject rather than a property of a window
+
+409 contiguous lines of `main_window.py` — nine methods and four class
+constants — were the printer, the two print dialogs and the page raster. They
+are `app/printing.py` now, and the module is **1,879 → 1,492**.
+
+- **One contiguous span, which is what made "nothing was lost" assertable.**
+  `_new_printer` at 903 through the end of `_print_page` at 1311, with no
+  non-printing method between them, so the cut is a slice and the check is that
+  the slice put back beside what stayed reproduces the file it came from.
+- **The conversion is a parameter list rather than a redesign, and that was
+  MEASURED before the cut.** Every one of the nine either already carried
+  `@staticmethod`/`@classmethod` or touched `self` for nothing but `document`
+  and the two print settings. So the pure half — `fit`, `render_dpi`,
+  `paint_page` — is callable with no Qt window at all, which is what
+  `tests/test_v12_print.py` had always driven it as.
+- **`PrintOptions` exists because the preview WRITES the settings.** The
+  toolbar's markups checkbox and line-weight picker set them and the job reads
+  them; with the code out of the window, two window attributes it wrote back
+  into would be the printing code half out of the window. One small mutable
+  object, held by `MainWindow` as `self.print_options`.
+- **The status bar stayed the window's.** `run_print_dialog` returns the
+  sentence and `MainWindow.print_document` shows it — a printing module that
+  knew which widget has a status bar would be the window's business back in
+  here under another name.
+- **`self._preview_weight_combo` did not travel, because it is write-only —
+  measured, not reasoned.** Assigned once and read nowhere in the repository.
+  Driven under Qt: a combo added with `QToolBar.addWidget` and then dropped on
+  the Python side survives `gc.collect()` and is still usable through
+  `widgetForAction`, because the toolbar takes ownership — and the `_changed`
+  closure holds it as well. A keep-alive that keeps nothing alive.
+- **A clause of the module docstring was WRONG and had been carried forward
+  unread.** It named "the five panes" as still in the window; `app/panels/`
+  holds eight pane modules and has for a long time. What the window holds is
+  their DOCKING. That is the same drift this file already gates one document
+  over, in the docstring of the module being unwound.
+
+### The gate is the same KIND of claim, in printing's vocabulary
+
+*The window neither drives a printer nor rasterises a page.* Permanent,
+exactly what was extracted, and what an accumulation looks like on its FIRST
+step — a print helper written back into the window reaches for
+`PySide6.QtPrintSupport` or for `fitz` on its first line, because those are
+the two libraries the job needs. Measured before it was taken: every one of
+those imports in `main_window.py` was inside the printing block, so the claim
+is **zero** rather than a threshold.
+
+- **Function-local imports are walked, which is the whole point.** All nine
+  methods imported `QtPrintSupport` or `fitz` *inside* themselves, so a
+  top-level scan would have called the window printer-free while it drove a
+  printer nine times.
+- **Two floors, pointing opposite ways.** The names must be findable in
+  `app/printing.py` — an absence assertion is satisfied by a checkout where
+  printing was deleted — and `MainWindow` must still offer both print actions,
+  because a window that stopped offering them satisfies every other assertion
+  here and is not what moving it meant.
+
+### Re-pointing the tests is what found the two real defects
+
+The previous extraction records why the tests must move: `main_window`
+legitimately imports what it opens, so `win._print_fit` still resolves and a
+green suite there proves the window works rather than that the new module
+does. Doing it turned up two things a reading would not have:
+
+- **A monkey-patched class constant SEGFAULTED the interpreter.**
+  `test_bands_join_when_raster_outruns_the_viewport` saves and restores
+  `MainWindow._PRINT_BAND_PX`, which no longer exists — and the `keep = …` line
+  sits *before* its own `try`, so the `AttributeError` escaped with a `QPainter`
+  still active on a `QImage`. Qt printed `QPaintDevice: Cannot destroy paint
+  device that is being painted` and the process died. Loud, and loud about the
+  wrong thing: a `SIGSEGV` reads as a Qt problem, not as a test patching a name
+  the code stopped reading.
+- **A second test called `win._add_markups_toggle`**, which is now the module's
+  and takes the options. It failed by name, which is the good direction.
+
+**Verified in BOTH directions**, this file's own rule from the Qt-degradation
+round, because a skip added where a test used to run looks exactly like a fix:
+HEAD **740 tests across 58 modules, 28 skipped**; after the extraction and the
+re-pointing, **740 / 58 / 28** with identical skip reasons — no test lost, no
+skip added — and **745 / 58 / 28** with the five tests this round added.
+
+### ...and two DEAD arms were coverage gaps rather than dead gates
+
+Twelve injections, ten firing. The two that did not are the ones worth the
+space, because in both cases the code was right and **nothing was asking it**:
+
+- **`MainWindow.print_preview` was driven by no test at all.** Passing `None`
+  where the window hands over its `print_options` fired nothing: the preview's
+  own controls are exercised directly against the module, and the wrapper —
+  which is now the window's entire remaining half of printing — was covered
+  only by the AST gate asserting it exists. `print_document` had a test and
+  its sibling did not.
+- **The line-weight picker's WRITE was untested while its READ was covered
+  four ways.** Deleting `options.min_line_pt = …` left every weight test
+  green, because those set the option directly and paint with it. The markups
+  toggle beside it had both halves; this one had one, and the asymmetry is
+  invisible until something breaks the half nobody drives.
+
+Both now have a test, and re-run they fire — as does passing the wrong
+document to the other wrapper, and dropping the picker's signal connection.
+**Fourteen arms, every one firing on its own defect**: a print helper written
+back into the window reaching for `QtPrintSupport`, the same reaching only for
+`fitz`, the sweep narrowed to top-level imports, printing deleted rather than
+moved, the window no longer offering the actions, either wrapper handing over
+the wrong thing, the toggle and the picker each writing nowhere the job reads,
+the picker's signal dropped, the README losing the module, the README naming
+one that does not exist, the band margin removed, and `render_dpi` falling
+back to the paint viewport.
+
 ## "Python 3.11+" was a claim to contributors, and only 3.11 ran
 
 `CONTRIBUTING.md` and `README.md` both say it. The CI matrix varied only the

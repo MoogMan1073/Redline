@@ -1,15 +1,20 @@
 """Main window: Viewer / TODO / Wire Numbers / Component Labels / PDF Tools
 panes (tabified, floatable dock widgets), toolbar, comment + navigation docks.
 
-The dialogs it opens are NOT here. They were, along with everything else, and
-that is what this module is being unwound from -- `app/settings_dialog.py` holds
-the preferences dialog and `app/dialogs.py` the annotation and audit ones. What
-is left is still four subjects in one file (the five panes, the toolbar, the
-menus and the file lifecycle), which is named rather than glossed."""
+The dialogs it opens are NOT here, and neither is printing. They were, along
+with everything else, and that is what this module is being unwound from --
+`app/settings_dialog.py` holds the preferences dialog, `app/dialogs.py` the
+annotation and audit ones, and `app/printing.py` the printer, the two print
+dialogs and the page raster.
+
+What is left is named rather than glossed, and one clause of it was WRONG:
+the five panes are already their own modules under `app/panels/`, so what the
+window holds is their DOCKING rather than the panes -- measured, and the
+sentence that said otherwise had been carried forward unread. The rest is the
+toolbar, the menus, the file lifecycle and the document itself."""
 
 from __future__ import annotations
 
-import contextlib
 import os
 
 from PySide6.QtCore import Qt, QTimer
@@ -26,6 +31,7 @@ from .dialogs import (
     FillDialog, TextEditDialog, WaiveDialog, _apply_font, _fill_swatch, _swatch,
 )
 from .settings_dialog import SettingsDialog
+from . import printing
 from .model.document import Document
 from .model.annotations import Annotation
 from .viewer.pdf_view import PdfView
@@ -139,10 +145,12 @@ class MainWindow(QMainWindow):
         self.setTabPosition(Qt.AllDockWidgetAreas, QTabWidget.North)
         self.config = AppConfig()
         self.document = None
-        self._print_include_marks = True   # print the app's markups by default
-        # minimum printed line weight in points; the preview toolbar can
-        # override it for the current job without touching the saved setting
-        self._print_min_line_pt = self.config.print_min_line_pt
+        # What the print-preview toolbar can change and a job reads. One
+        # object rather than two attributes, because `app/printing.py` is
+        # where both are used and a pair of window attributes it wrote back
+        # into would be the printing code half out of the window.
+        self.print_options = printing.PrintOptions(
+            min_line_pt=self.config.print_min_line_pt)
 
         self._progress("Preparing the canvas…", 62)
         self.view = PdfView(self)
@@ -900,415 +908,20 @@ class MainWindow(QMainWindow):
                 "This PyMuPDF build can't flatten annotations, so an annotated "
                 "copy was written instead.")
 
-    def _new_printer(self):
-        """Create a QPrinter for printing the drawing.
-
-        Built in **ScreenResolution** mode on purpose: HighResolution queries the
-        default printer's capabilities at construction, which on Windows pops a
-        blocking "contacting printer…" dialog (and hangs on a slow/offline
-        network printer) before the user can do anything. ScreenResolution
-        doesn't contact the printer; we then raise the logical DPI so the output
-        still prints at a decent resolution.
-
-        setResolution(600) sets the *logical* coordinate space to the 600 dpi
-        working resolution where the engine honours it (Qt's PDF and CUPS
-        engines do). The raster resolution itself is chosen per job by
-        ``_print_render_dpi`` — on Windows the Win32 engine ignores this call
-        for paint metrics and pins the viewport to screen dpi, which is why
-        the render dpi must never be derived from the viewport.
-        """
-        from PySide6.QtPrintSupport import QPrinter
-        printer = QPrinter(QPrinter.ScreenResolution)
-        printer.setResolution(600)
-        printer.setDocName(os.path.basename(self.document.path))
-        return printer
-
     def print_document(self):
-        """Print the drawing (with its marks) straight through the system print
-        dialog — the standard Windows printer popup: pick the printer, copies,
-        orientation and page range, then print. (Use Print preview… to see the
-        pages first.)"""
-        if self.document is None:
-            return
-        from PySide6.QtPrintSupport import QPrintDialog
-        printer = self._new_printer()
-        dlg = QPrintDialog(printer, self)
-        dlg.setWindowTitle("Print")
-        if self.document.page_count:
-            dlg.setMinMax(1, self.document.page_count)
-            dlg.setOption(QPrintDialog.PrintPageRange, True)
-        if dlg.exec() != QPrintDialog.Accepted:
-            return
-        # Rendering a full 600 dpi page is what makes the output sharp, but it
-        # also costs about a second a page — long enough for a multi-sheet set
-        # to look like the app has locked up. Show progress (and let it be
-        # cancelled) instead of freezing.
-        from PySide6.QtWidgets import QProgressDialog
-        progress = QProgressDialog("Printing…", "Cancel", 0, 1, self)
-        progress.setWindowTitle("Printing")
-        progress.setWindowModality(Qt.WindowModal)
-        progress.setMinimumDuration(800)     # no flash for a quick one-pager
+        """Print the drawing through the system print dialog.
 
-        def on_page(done, total):
-            progress.setMaximum(total)
-            progress.setValue(done)
-            progress.setLabelText(
-                f"Printing page {min(done + 1, total)} of {total}…")
-            QApplication.processEvents()
-            return not progress.wasCanceled()
-
-        try:
-            pages = self._print_to(printer, on_page=on_page)
-            if progress.wasCanceled():
-                self.statusBar().showMessage("Printing cancelled", 5000)
-            else:
-                self.statusBar().showMessage(
-                    f"Sent {pages} page{'' if pages == 1 else 's'} to "
-                    f"{printer.printerName() or 'printer'}", 5000)
-        except Exception as e:
-            QMessageBox.warning(self, "Print failed", str(e))
-        finally:
-            progress.close()
+        The window's half of it: the parent widget, the open document and the
+        status bar. Everything about a printer lives in `app/printing.py`.
+        """
+        msg = printing.run_print_dialog(self, self.document, self.print_options)
+        if msg:
+            self.statusBar().showMessage(msg, 5000)
 
     def print_preview(self):
-        """Optional: show the pages in a preview window, then print from there."""
-        if self.document is None:
-            return
-        from PySide6.QtPrintSupport import QPrintPreviewDialog
-        try:
-            printer = self._new_printer()
-            preview = QPrintPreviewDialog(printer, self)
-            preview.setWindowTitle("Print preview")
-            preview.resize(1000, 800)
-            preview.paintRequested.connect(self._print_to)
-            self._add_markups_toggle(preview)
-            preview.exec()
-        except Exception as e:
-            QMessageBox.warning(self, "Print failed", str(e))
+        """Show the pages in a preview window, then print from there."""
+        printing.run_print_preview(self, self.document, self.print_options)
 
-    def _add_markups_toggle(self, preview):
-        """Add an 'Include markups' checkbox to the print-preview toolbar so the
-        user can print the clean drawing or the drawing with the app's marks.
-        Defaults to on (marks included)."""
-        from PySide6.QtWidgets import QToolBar
-        from PySide6.QtPrintSupport import QPrintPreviewWidget
-        tb = preview.findChild(QToolBar)
-        if tb is None:
-            return
-        act = tb.addAction("Include markups")
-        act.setCheckable(True)
-        act.setChecked(self._print_include_marks)
-        act.setToolTip("Print the marks/notes you added on top of the drawing; "
-                       "uncheck to print the clean drawing.")
-
-        def _toggle(on):
-            self._print_include_marks = on
-            pv = preview.findChild(QPrintPreviewWidget)
-            if pv is not None:
-                pv.updatePreview()   # re-render with/without marks
-
-        act.toggled.connect(_toggle)
-        self._add_line_weight_picker(preview, tb)
-
-    def _add_line_weight_picker(self, preview, tb):
-        """Add a minimum line-weight picker to the print-preview toolbar.
-
-        Preview is where you actually judge line weight, so the control lives
-        here as well as in Settings. Changing it re-renders immediately and
-        applies to the job printed from the preview; Settings holds the
-        default for next time.
-        """
-        from PySide6.QtWidgets import QComboBox, QLabel
-        from PySide6.QtPrintSupport import QPrintPreviewWidget
-        from .config import PRINT_LINE_WEIGHTS
-        tb.addSeparator()
-        tb.addWidget(QLabel(" Min line: "))
-        combo = QComboBox()
-        for label, pt in PRINT_LINE_WEIGHTS:
-            combo.addItem(label, pt)
-        current = min(range(len(PRINT_LINE_WEIGHTS)),
-                      key=lambda i: abs(PRINT_LINE_WEIGHTS[i][1]
-                                        - self._print_min_line_pt))
-        combo.setCurrentIndex(current)
-        combo.setToolTip(
-            "Thicken hairlines to at least this weight when printing.\n"
-            "Heavier geometry and all text are left exactly as drawn.")
-
-        def _changed(i):
-            self._print_min_line_pt = float(combo.itemData(i) or 0.0)
-            pv = preview.findChild(QPrintPreviewWidget)
-            if pv is not None:
-                pv.updatePreview()
-
-        combo.currentIndexChanged.connect(_changed)
-        tb.addWidget(combo)
-        self._preview_weight_combo = combo
-
-    def _print_to(self, printer, on_page=None):
-        """Paint each requested page onto ``printer``, fitted and centred on the
-        sheet. Includes the app's markups unless ``_print_include_marks`` is off
-        (the print-preview toggle). Kept separate from the dialog so it can be
-        unit-tested against a PDF-output printer.
-
-        ``on_page(done, total)`` is called before each page if given; returning
-        False stops the job (the user cancelled). Returns the number of pages
-        actually painted.
-        """
-        from PySide6.QtGui import QPainter
-        work = self.document.annotated_fitz(
-            with_marks=getattr(self, "_print_include_marks", True))
-        try:
-            first = printer.fromPage() or 1
-            last = printer.toPage() or work.page_count
-            first = max(1, first)
-            last = min(work.page_count, last)
-            total = max(0, last - first + 1)
-            done = 0
-            # The painter is created only once a page is actually going to be
-            # drawn: starting one and ending it without painting still emits a
-            # sheet, so cancelling at the first page would waste a blank page.
-            painter = None
-            try:
-                for n, i in enumerate(range(first - 1, last)):
-                    if on_page is not None and not on_page(n, total):
-                        break
-                    if painter is None:
-                        painter = QPainter(printer)
-                        dpi = self._print_render_dpi(printer)
-                    elif done:
-                        printer.newPage()
-                    self._print_page(painter, work[i], painter.viewport(),
-                                     dpi=dpi,
-                                     min_line_pt=self._print_min_line_pt)
-                    done += 1
-            finally:
-                if painter is not None:
-                    painter.end()
-            return done
-        finally:
-            work.close()
-
-    @staticmethod
-    def _print_render_dpi(printer) -> int:
-        """The dpi pages are rasterised at for this print job.
-
-        Never inferred from the paint viewport. On Windows the Win32 print
-        engine in ScreenResolution mode pins the painter's logical metrics to
-        the *screen* dpi (96) no matter what setResolution() asked for — that
-        call only reaches the driver's DEVMODE — so "render 1:1 with the
-        viewport" faithfully produced 96 dpi pages that GDI then stretched
-        ~6x onto the sheet. Verified from a Microsoft Print to PDF export:
-        one 1573x1018 raster on a 17x11 sheet, exactly 96 dpi.
-
-        The device's *physical* dpi is the printer DC's true resolution in
-        every mode, so render at that — floored at the app's 600 dpi working
-        resolution, and bounded so a 2400 dpi photo driver can't demand an
-        absurd raster.
-        """
-        phys = logical = 0
-        try:
-            phys = max(int(printer.physicalDpiX() or 0),
-                       int(printer.physicalDpiY() or 0))
-        except Exception:
-            pass
-        try:
-            logical = int(printer.resolution() or 0)
-        except Exception:
-            pass
-        if logical >= 600:
-            # the engine honours the working resolution (Qt's PDF/CUPS path):
-            # render 1:1 with it. Don't chase phys here — Qt's PDF engine
-            # reports a flat 1200 dpi physical whatever was asked for, which
-            # would quadruple every spool for no visible gain.
-            return min(logical, 1200)
-        # a low logical resolution is the screen-pinned Windows viewport:
-        # take the device's own dpi, floored at the 600 working resolution
-        return max(600, min(phys, 1200))
-
-    # One rasterised band is capped at this many pixels, so peak memory stays
-    # bounded no matter how big the sheet or how high the driver's dpi — an
-    # E-size plot at 1200 dpi would otherwise be a single ~6 GB bitmap. Two
-    # bitmaps of a band are live at once (the pixmap, and the trimmed copy handed
-    # to the painter), so 24 Mpx costs ~145 MB while a band is being drawn.
-    _PRINT_BAND_PX = 24_000_000
-
-    # Device pixels per PDF point for the *preview* raster (~150 dpi). The
-    # preview dialog paints every page into a stored QPicture and keeps them all
-    # at once, so rasterising there at the printer's real resolution would hold
-    # the whole document in memory (a 6-page preview at 600 dpi already costs
-    # ~1 GB). The preview only ever shows a scaled-down page, so it doesn't need
-    # print resolution; the real print is unaffected.
-    _PREVIEW_SCALE = 150 / 72.0
-
-    # ...and never more than this many pixels for one previewed page, whatever
-    # the sheet size. A dpi cap alone still scales with the paper: an E-size
-    # sheet at 150 dpi is 34 Mpx, so a preview of a large-format set would still
-    # retain ~145 MB per page. The preview is only ever shown scaled down.
-    _PREVIEW_MAX_PX = 4_000_000
-
-    # Device rows rendered past each end of a band and then trimmed off, so no
-    # kept row was antialiased against the edge of the band's clip. At this
-    # depth a banded page comes out identical to a single full-page render.
-    _BAND_MARGIN = 16
-
-    @staticmethod
-    @contextlib.contextmanager
-    def _min_line_width(px):
-        """Raise MuPDF's minimum stroke width to ``px`` device pixels.
-
-        AutoCAD plots schematic geometry as hairlines, which a renderer draws
-        one device pixel wide — 1/96 in at the screen resolution the old print
-        path really used, but only 1/600 in once pages are rendered at the
-        printer's own dpi. True to the file, far too thin on paper. This lifts
-        anything below the floor and leaves heavier geometry (and all text)
-        exactly as drawn.
-
-        The setting is *global* to MuPDF, so it is always restored — leaking it
-        would silently thicken the on-screen viewer as well.
-        """
-        import fitz
-        if not px or px <= 0:
-            yield
-            return
-        try:
-            fitz.TOOLS.set_graphics_min_line_width(float(px))
-            yield
-        finally:
-            fitz.TOOLS.set_graphics_min_line_width(0.0)
-
-    @staticmethod
-    def _is_preview(painter):
-        """True when painting into the print-preview dialog rather than onto a
-        real printer — the preview backs its pages with QPicture."""
-        from PySide6.QtGui import QPaintEngine
-        try:
-            eng = painter.paintEngine()
-            return eng is not None and eng.type() == QPaintEngine.Picture
-        except Exception:
-            return False
-
-    @staticmethod
-    def _print_fit(rect, target):
-        """Where one page lands on the sheet: ``(scale, w, h, x, y)`` in device
-        pixels, fitted to ``target`` without distortion and centred on it."""
-        pw = max(1.0, float(rect.width))
-        ph = max(1.0, float(rect.height))
-        scale = min(target.width() / pw, target.height() / ph)
-        w = max(1, int(round(pw * scale)))
-        h = max(1, int(round(ph * scale)))
-        return (scale, w, h,
-                int(round((target.width() - w) / 2.0)),
-                int(round((target.height() - h) / 2.0)))
-
-    @classmethod
-    def _print_page(cls, painter, page, target, dpi=None, min_line_pt=0.0):
-        """Draw one page (with its marks) onto the printer's viewport.
-
-        The page is rasterised at ``dpi`` (see ``_print_render_dpi``) and drawn
-        into the *logical* target rect. The two are deliberately decoupled: the
-        raster carries the detail, the logical rect only says where it lands,
-        and the print engine passes the full-resolution pixels through — the
-        PDF engine embeds them, GDI stretches them in device space at the
-        driver's real resolution. Sizing the raster to the paint viewport
-        instead is what silently produced 96 dpi prints on Windows, where the
-        viewport is screen-resolution whatever the device can do.
-
-        With ``dpi=None`` the raster simply matches the logical rect pixel for
-        pixel. Tall pages are rasterised in horizontal bands so the peak
-        bitmap stays bounded (see ``_PRINT_BAND_PX``) at no resolution cost.
-
-        ``min_line_pt`` raises hairlines to that weight in PDF points (see
-        ``PRINT_LINE_WEIGHTS``). It is a floor, not a multiplier: geometry
-        already heavier is untouched, and text is never affected.
-        """
-        import fitz
-        from PySide6.QtGui import QImage, QPainter
-        from PySide6.QtCore import QRectF
-        r = page.rect
-        scale, w, h, x0, y0 = cls._print_fit(r, target)
-        if scale <= 0:
-            # No printable area at all — exotic paper, or margins wider than the
-            # sheet. There is nothing to draw, and going on would divide by the
-            # scale when clipping bands.
-            return
-
-        if cls._is_preview(painter):
-            area = max(1.0, float(r.width) * float(r.height))
-            pscale = min(scale, cls._PREVIEW_SCALE,
-                         (cls._PREVIEW_MAX_PX / area) ** 0.5)
-            if pscale < scale:
-                # a single modest raster, drawn up to the full sheet size.
-                # The floor is scaled to *this* raster so the preview shows the
-                # same relative weight the print will have.
-                with cls._min_line_width(min_line_pt * pscale):
-                    pm = page.get_pixmap(matrix=fitz.Matrix(pscale, pscale),
-                                         alpha=False, annots=True)
-                # samples_mv is a view on the pixmap; copy() owns its pixels, so
-                # the image outlives pm without duplicating the buffer twice
-                img = QImage(pm.samples_mv, pm.width, pm.height, pm.stride,
-                             QImage.Format_RGB888).copy()
-                painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
-                painter.drawImage(QRectF(x0, y0, w, h), img)
-                return
-
-        # raster pixels per PDF point: enough that the page lands on paper at
-        # ``dpi``, independent of the viewport's own (possibly screen) density
-        logical = 0
-        try:
-            logical = int(painter.device().logicalDpiX() or 0)
-        except Exception:
-            pass
-        if dpi and logical > 0:
-            s = scale * float(dpi) / float(logical)
-        else:
-            s = scale                     # raster == logical px
-        mat = fitz.Matrix(s, s)
-        origin = (r * mat).irect          # where the whole page starts, scaled
-        W = max(1, origin.width)
-        H = max(1, origin.height)
-        ratio = h / float(H)              # logical units per raster row
-        band_rows = max(1, min(H, int(cls._PRINT_BAND_PX // W)))
-        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
-        y = 0
-        # ``s`` is raster px per PDF point, so this converts the weight floor
-        # from points into the device pixels MuPDF wants
-        with cls._min_line_width(min_line_pt * s):
-            while y < H:
-                rows = min(band_rows, H - y)
-                # Render a few rows beyond the band and then throw them away. The
-                # renderer antialiases against the edge of the clip, so a row sitting
-                # right on a band boundary comes out lighter than it should — which
-                # would print as a faint line across the sheet at every join. Only
-                # rows well inside the clip are kept, so every row is rendered
-                # exactly as it would be in a single full-page pass.
-                top_px = max(0, y - cls._BAND_MARGIN)
-                bot_px = min(H, y + rows + cls._BAND_MARGIN)
-                pm = page.get_pixmap(
-                    matrix=mat, alpha=False, annots=True,
-                    clip=fitz.Rect(r.x0, r.y0 + top_px / s,
-                                   r.x1, r.y0 + bot_px / s))
-                # samples_mv is a view on the pixmap's own buffer rather than a copy
-                # of it, and the single copy() below both trims the band and detaches
-                # it — so one band costs one extra bitmap, not three.
-                img = QImage(pm.samples_mv, pm.width, pm.height, pm.stride,
-                             QImage.Format_RGB888)
-                # Where this band's kept rows start inside the rendered strip. Clamp
-                # it: QImage.copy() pads out-of-range rows with black, and a black
-                # stripe across a drawing is far worse than a rounding artefact.
-                off = min(max(0, y - (pm.y - origin.y0)), max(0, img.height() - 1))
-                take = min(rows, img.height() - off)
-                if take > 0:
-                    # Band edges share the *identical* float expression
-                    # (y0 + K * ratio), so however the engine rounds logical to
-                    # device coordinates, adjacent bands round together — no
-                    # hairline gap or double-drawn seam between them.
-                    t0 = y0 + y * ratio
-                    t1 = y0 + (y + take) * ratio
-                    painter.drawImage(
-                        QRectF(x0 + (pm.x - origin.x0) * ratio, t0,
-                               img.width() * ratio, t1 - t0),
-                        img.copy(0, off, img.width(), take))
-                y += rows
 
     def open_settings(self):
         dlg = SettingsDialog(self.config, self)
@@ -1317,7 +930,7 @@ class MainWindow(QMainWindow):
             self.view.config = self.config
             self.ref_view.config = self.config
             # a changed default takes effect on the next print without a restart
-            self._print_min_line_pt = self.config.print_min_line_pt
+            self.print_options.min_line_pt = self.config.print_min_line_pt
             if self.document is not None:
                 self.document.ignore_patterns = self.config.ignore_patterns()
                 self.comment_panel.refresh()

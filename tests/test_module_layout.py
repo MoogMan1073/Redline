@@ -111,6 +111,94 @@ class TestTheWindowHoldsNoDialog(unittest.TestCase):
         )
 
 
+def _imported_names(path: pathlib.Path) -> set[str]:
+    """Every module this file imports from, walked with `ast`.
+
+    Function-local imports included, which is the whole point here: every one
+    of the nine printing methods imported `QtPrintSupport` or `fitz` *inside*
+    itself, so a top-level scan would have reported the window as printer-free
+    while it drove a printer nine times.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    out: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            out.update(a.name for a in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            out.add(node.module)
+    return out
+
+
+class TestTheWindowDoesNotPrint(unittest.TestCase):
+    """Printing is a subject, and it lives in ``app/printing.py``.
+
+    The same KIND of claim the dialog sweep makes, in printing's vocabulary. A
+    line count is a snapshot; *the window neither drives a printer nor
+    rasterises a page* is permanent, is exactly what was extracted, and is what
+    an accumulation looks like on its FIRST step — a print helper written back
+    into the window reaches for `QtPrintSupport` or for `fitz` on its first
+    line, because those are the two libraries the job needs.
+
+    Measured before it was taken: every `QtPrintSupport` import and every
+    `fitz` use in `main_window.py` was inside the 409-line printing block, so
+    the claim is zero rather than a threshold.
+    """
+
+    PRINT_LIBS = ("PySide6.QtPrintSupport", "fitz", "pymupdf")
+
+    def test_the_window_imports_no_printing_library(self):
+        found = sorted(_imported_names(APP / "main_window.py")
+                       & set(self.PRINT_LIBS))
+        self.assertEqual(
+            found,
+            [],
+            f"app/main_window.py imports {found} again. Printing moved to "
+            "app/printing.py -- the printer, the two print dialogs and the "
+            "page raster -- and a window that reaches for one of those "
+            "libraries is the same accumulation starting over.",
+        )
+
+    def test_printing_is_where_it_was_moved_to(self):
+        # The floor. "The window imports no print library" is satisfied just as
+        # well by a checkout where printing was deleted, or by a sweep that
+        # parses nothing.
+        names = _imported_names(APP / "printing.py")
+        for lib in ("PySide6.QtPrintSupport", "fitz"):
+            self.assertIn(
+                lib,
+                names,
+                f"app/printing.py does not import {lib}, so the check above "
+                "is asserting the absence of something that no longer exists "
+                "anywhere",
+            )
+        src = (APP / "printing.py").read_text(encoding="utf-8")
+        tree = ast.parse(src)
+        top = {n.name for n in tree.body
+               if isinstance(n, (ast.FunctionDef, ast.ClassDef))}
+        for name in ("new_printer", "run_print_dialog", "run_print_preview",
+                     "paint_document", "paint_page", "render_dpi", "fit",
+                     "min_line_width", "is_preview", "PrintOptions"):
+            self.assertIn(name, top, f"app/printing.py has no {name}")
+
+    def test_the_window_still_offers_both_print_actions(self):
+        # ...and the other floor, pointed the other way: the extraction must
+        # not have taken the FEATURE with it. The two menu actions are the
+        # window's, and a window that stopped offering them would satisfy every
+        # assertion above.
+        tree = ast.parse((APP / "main_window.py").read_text(encoding="utf-8"))
+        cls = next(n for n in tree.body
+                   if isinstance(n, ast.ClassDef) and n.name == "MainWindow")
+        meths = {n.name for n in cls.body
+                 if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+        for name in ("print_document", "print_preview"):
+            self.assertIn(
+                name,
+                meths,
+                f"MainWindow.{name} is gone, so the window no longer offers "
+                "printing at all -- which is not what moving it meant",
+            )
+
+
 class TestTheReadmeLayoutMatchesTheTree(unittest.TestCase):
     """Every module the layout block names exists, and the new ones are named.
 
@@ -126,7 +214,7 @@ class TestTheReadmeLayoutMatchesTheTree(unittest.TestCase):
 
     def test_the_new_modules_are_named(self):
         block = self._layout_block()
-        for name in ("settings_dialog.py", "dialogs.py"):
+        for name in ("settings_dialog.py", "dialogs.py", "printing.py"):
             self.assertIn(
                 name,
                 block,
