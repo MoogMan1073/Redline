@@ -190,9 +190,12 @@ persisted between sessions. **Help ▸ About** shows the app name, version and c
 ```
 main.py                      QApplication entry
 app/
-  main_window.py             Window: docks the five panes (Viewer, TODO, Wire
-                             Numbers, Component Labels, PDF Tools), toolbar,
-                             menus, file lifecycle
+  main_window.py             Window: docks the panes, wires the tools, holds
+                             the audit/waiver, style and reference-view acts
+  toolbar.py                 The main toolbar: tool group, style widgets,
+                             zoom + page
+  menus.py                   The menu bar, and the Open Recent list
+  lifecycle.py               Open / Save As fork / unsaved guard / close
   settings_dialog.py         The preferences dialog (five tabs)
   dialogs.py                 Text/callout editor, fill picker, waive-a-finding
   printing.py                Printer, print + preview dialogs, page raster

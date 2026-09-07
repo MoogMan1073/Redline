@@ -5,20 +5,20 @@ Measured 2026-08-26 and unchanged on 2026-09-03: ``app/main_window.py`` was
 dialog, five panes, the toolbar, the menus and the file lifecycle. One file was
 8.6% of a 29,260-line codebase.
 
-The dialogs are out (``app/settings_dialog.py``, ``app/dialogs.py``), which took
-it to 1,879. **The rest of the split is not done**, and this module says so
-rather than implying the row is closed: the five panes, the toolbar, the menus
-and the lifecycle are all still in there.
+The dialogs went first (``app/settings_dialog.py``, ``app/dialogs.py``), then
+printing (``app/printing.py``), then the toolbar, the menu bar and the document
+lifecycle (``app/toolbar.py``, ``app/menus.py``, ``app/lifecycle.py``):
+**2,506 -> 1,879 -> 1,492 -> 1,081**. What is left is the docking of the panes
+and the acts nothing else owns.
 
-What is gated is the two things that would quietly undo it.
+Those numbers are dated evidence for the paragraph they sit in, never a current
+claim — none of the gates below reads one. **Every gate here is a KIND of
+thing**: a dialog class defined back in the window, a printing library it
+imports, a widget class it constructs, a model it builds. A count is a snapshot
+and wrong by the next commit; a kind is permanent, is exactly what was
+extracted, and is what an accumulation looks like on its FIRST step.
 
-**A dialog class defined back in the window.** That is not a line count — a
-count is a snapshot, wrong by the next commit, and this family's standing rule
-is to name the script that prints the current answer instead. A ``QDialog``
-subclass in ``main_window`` is a *kind* of thing, permanent and checkable, and
-it is exactly what was extracted.
-
-**The README's layout block going stale.** It described the god-object in as
+**And the README's layout block going stale.** It described the god-object in as
 many words (*"Window: five ... panes, toolbar, Settings"*), so it was right
 about a thing that was wrong, and a block that stops matching the tree is the
 drift this repository already gates one document over.
@@ -72,9 +72,8 @@ class TestTheWindowHoldsNoDialog(unittest.TestCase):
             found,
             [],
             "app/main_window.py defines "
-            f"{found} again. That module already holds the five panes, the "
-            "toolbar, the menus and the file lifecycle; the dialogs were moved "
-            "to app/settings_dialog.py and app/dialogs.py, and a new one here "
+            f"{found} again. The dialogs were moved to "
+            "app/settings_dialog.py and app/dialogs.py, and a new one here "
             "starts the same accumulation over.",
         )
 
@@ -199,6 +198,186 @@ class TestTheWindowDoesNotPrint(unittest.TestCase):
             )
 
 
+def _imported_symbols(path: pathlib.Path) -> set[str]:
+    """Every NAME a `from X import a, b` brings in, function-local included."""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    out: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            out.update(a.asname or a.name for a in node.names)
+    return out
+
+
+class TestTheWindowDoesNotBuildChrome(unittest.TestCase):
+    """The toolbar and the menus are ``app/toolbar.py`` and ``app/menus.py``.
+
+    The row's own ``remains`` said the two *"build the same actions and may not
+    be separable, which is a measurement somebody has to take before cutting"*.
+    **The measurement refutes it**, and the discriminator is what each one
+    makes: they write 11 self-attributes each and share none, and they overlap
+    in exactly one import (``QKeySequence``). The toolbar CONSTRUCTS eleven
+    kinds of widget; the menu WIRES methods that already exist and needs no
+    widget class at all.
+
+    So the claim here is the printing gate's, in chrome's vocabulary: a window
+    that reaches for ``QToolBar`` or ``QComboBox`` is building a toolbar again,
+    whatever it calls the method. Measured before it was taken — moving the
+    toolbar out left **ten** imports unused in the window, which is why this is
+    zero rather than a threshold. (``QApplication`` was dead already and is not
+    counted as freed by the cut; it went with them.)
+    """
+
+    CHROME = ("QToolBar", "QComboBox", "QSpinBox", "QDoubleSpinBox",
+              "QPushButton", "QCheckBox", "QActionGroup", "QAction",
+              "QLabel", "QKeySequence")
+
+    def test_the_window_imports_no_chrome_widget(self):
+        found = sorted(_imported_symbols(APP / "main_window.py")
+                       & set(self.CHROME))
+        self.assertEqual(
+            found,
+            [],
+            f"app/main_window.py imports {found} again. The toolbar moved to "
+            "app/toolbar.py and the menu bar to app/menus.py; a window that "
+            "reaches for a widget class is building chrome, which is the "
+            "accumulation this cut undid.",
+        )
+
+    def test_the_window_no_longer_constructs_a_document(self):
+        # The lifecycle half, and the sharper of the two boundaries: the window
+        # stops importing the MODEL. It asks `lifecycle.open_document` for one.
+        self.assertNotIn(
+            "Document",
+            _imported_symbols(APP / "main_window.py"),
+            "app/main_window.py imports Document again — opening, forking and "
+            "closing moved to app/lifecycle.py, and constructing the model is "
+            "what that module is for.",
+        )
+
+    def test_the_chrome_is_where_it_was_moved_to(self):
+        # The floor. Every assertion above is satisfied just as well by a
+        # checkout where the toolbar and the menus were deleted.
+        tb = _imported_symbols(APP / "toolbar.py")
+        for name in ("QToolBar", "QComboBox", "QSpinBox", "QActionGroup"):
+            self.assertIn(name, tb, f"app/toolbar.py does not import {name}")
+        for path, funcs in (
+            (APP / "toolbar.py", ("build",)),
+            (APP / "menus.py", ("build", "rebuild_recent", "clear_recent")),
+            (APP / "lifecycle.py", ("open_document", "save_as_fork",
+                                    "ok_to_lose_unsaved", "on_close")),
+        ):
+            top = {n.name for n in ast.parse(path.read_text(encoding="utf-8")).body
+                   if isinstance(n, ast.FunctionDef)}
+            for f in funcs:
+                self.assertIn(f, top, f"app/{path.name} has no {f}()")
+
+    def test_the_window_still_offers_what_moved(self):
+        # ...and the other floor: the extraction must not have taken the
+        # FEATURE. A wrapper exists on the window exactly where a consumer
+        # names it -- `main.py` and twenty test modules call `load_document`,
+        # `closeEvent` is Qt's own hook -- while `_build_toolbar` and
+        # `_build_menu` had no consumer and kept no wrapper. So this asserts
+        # both halves: the four wrappers are there and the two builders are not.
+        cls = next(n for n in ast.parse(
+            (APP / "main_window.py").read_text(encoding="utf-8")).body
+            if isinstance(n, ast.ClassDef) and n.name == "MainWindow")
+        meths = {n.name for n in cls.body if isinstance(n, ast.FunctionDef)}
+        for name in ("load_document", "save_as_fork", "_ok_to_lose_unsaved",
+                     "closeEvent", "_rebuild_recent_menu",
+                     "_clear_recent_files"):
+            self.assertIn(
+                name, meths,
+                f"MainWindow.{name} is gone, and a consumer names it -- which "
+                "is not what moving its body meant",
+            )
+        for name in ("_build_toolbar", "_build_menu"):
+            self.assertNotIn(
+                name, meths,
+                f"MainWindow.{name} is back. Nothing outside __init__ ever "
+                "named it, so a wrapper here is a second place to look for "
+                "one builder.",
+            )
+
+
+class TestEveryMenuActionNamesSomethingTheWindowHas(unittest.TestCase):
+    """A menu wired to a method nobody has fails when somebody CLICKS it.
+
+    Not at import, not at build — at click time, in front of a user, which is
+    the worst place to find out and the one place no test here was looking. The
+    risk is real rather than theoretical now that the wiring lives in another
+    module: ``app/menus.py`` names fifteen ``win.<handler>`` and cannot see the
+    class.
+
+    Measured on the day the cut landed: **zero** handlers name something
+    ``MainWindow`` does not have, which is what makes this a gate rather than a
+    worklist.
+    """
+
+    #: Handlers that are NOT MainWindow's own, with the reason. Gated in both
+    #: directions below: an entry that becomes a MainWindow method is an excuse
+    #: that has stopped excusing anything.
+    INHERITED = {
+        "close": "QWidget.close — Qt's, and the Quit action is meant to use it",
+    }
+
+    def _window_methods(self) -> set[str]:
+        cls = next(n for n in ast.parse(
+            (APP / "main_window.py").read_text(encoding="utf-8")).body
+            if isinstance(n, ast.ClassDef) and n.name == "MainWindow")
+        return {n.name for n in cls.body if isinstance(n, ast.FunctionDef)}
+
+    def _handlers(self) -> set[str]:
+        """Every bare ``win.<name>`` handed to a call in ``app/menus.py``.
+
+        Bare on purpose: ``win.view.fit_width`` is an attribute chain into a
+        pane the window merely holds, and whether *that* resolves is the pane's
+        contract rather than the window's.
+        """
+        tree = ast.parse((APP / "menus.py").read_text(encoding="utf-8"))
+        out: set[str] = set()
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            for arg in list(node.args) + [k.value for k in node.keywords]:
+                if (isinstance(arg, ast.Attribute)
+                        and isinstance(arg.value, ast.Name)
+                        and arg.value.id == "win"):
+                    out.add(arg.attr)
+        return out
+
+    def test_every_handler_resolves(self):
+        handlers = self._handlers()
+        self.assertGreater(
+            len(handlers), 8,
+            f"only found {sorted(handlers)} — the walk is not finding the "
+            "menu's handlers, so the check below is vacuous",
+        )
+        missing = sorted(h for h in handlers
+                         if h not in self._window_methods()
+                         and h not in self.INHERITED)
+        self.assertEqual(
+            missing, [],
+            f"app/menus.py wires {missing}, which MainWindow does not have. "
+            "That fails when somebody clicks the menu item, not when the "
+            "window is built.",
+        )
+
+    def test_the_inherited_exemption_still_excuses_something(self):
+        # Both directions, because an exemption is a claim about today.
+        methods = self._window_methods()
+        for name, why in self.INHERITED.items():
+            self.assertNotIn(
+                name, methods,
+                f"MainWindow now defines {name}, so the exemption ({why}) is "
+                "excusing nothing — retire it",
+            )
+            self.assertIn(
+                name, self._handlers(),
+                f"nothing in app/menus.py wires {name} any more, so the "
+                "exemption is a stale waiver",
+            )
+
+
 class TestTheReadmeLayoutMatchesTheTree(unittest.TestCase):
     """Every module the layout block names exists, and the new ones are named.
 
@@ -214,7 +393,8 @@ class TestTheReadmeLayoutMatchesTheTree(unittest.TestCase):
 
     def test_the_new_modules_are_named(self):
         block = self._layout_block()
-        for name in ("settings_dialog.py", "dialogs.py", "printing.py"):
+        for name in ("settings_dialog.py", "dialogs.py", "printing.py",
+                     "toolbar.py", "menus.py", "lifecycle.py"):
             self.assertIn(
                 name,
                 block,

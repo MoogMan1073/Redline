@@ -1,28 +1,29 @@
-"""Main window: Viewer / TODO / Wire Numbers / Component Labels / PDF Tools
-panes (tabified, floatable dock widgets), toolbar, comment + navigation docks.
+"""Main window: the DOCKING of the panes, and the acts nothing else owns.
 
-The dialogs it opens are NOT here, and neither is printing. They were, along
-with everything else, and that is what this module is being unwound from --
-`app/settings_dialog.py` holds the preferences dialog, `app/dialogs.py` the
-annotation and audit ones, and `app/printing.py` the printer, the two print
-dialogs and the page raster.
+Almost nothing this window used to hold is still here, and each piece left by a
+boundary rather than by size -- `app/settings_dialog.py` and `app/dialogs.py`
+hold every dialog, `app/printing.py` the printer and the page raster,
+`app/toolbar.py` the tool group and the style widgets, `app/menus.py` the menu
+bar and the Open Recent list, and `app/lifecycle.py` opening, forking and
+closing a document. 2,506 -> 1,879 -> 1,492 -> **1,081**.
 
-What is left is named rather than glossed, and one clause of it was WRONG:
-the five panes are already their own modules under `app/panels/`, so what the
-window holds is their DOCKING rather than the panes -- measured, and the
-sentence that said otherwise had been carried forward unread. The rest is the
-toolbar, the menus, the file lifecycle and the document itself."""
+What is left is named rather than glossed, and one clause of it was WRONG
+before: the panes are already their own modules under `app/panels/`, so what
+the window holds is their DOCKING rather than the panes -- measured, and the
+sentence that said otherwise had been carried forward unread here AND in the
+backlog row's own note. What remains is the docks, the tool/style/zoom acts the
+toolbar CALLS, the audit and waiver acts, the reference view, drag-and-drop and
+the UI-state save."""
 
 from __future__ import annotations
 
 import os
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QAction, QActionGroup, QKeySequence, QColor
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QMainWindow, QTabWidget, QToolBar, QFileDialog, QMessageBox, QDockWidget,
-    QSpinBox, QLabel, QWidget, QDialog, QCheckBox, QComboBox, QColorDialog,
-    QDoubleSpinBox, QPushButton, QStatusBar, QApplication,
+    QMainWindow, QTabWidget, QFileDialog, QMessageBox, QDockWidget,
+    QWidget, QDialog, QColorDialog, QStatusBar,
 )
 
 from . import __app_name__, __version__, __copyright__, app_icon
@@ -31,8 +32,7 @@ from .dialogs import (
     FillDialog, TextEditDialog, WaiveDialog, _apply_font, _fill_swatch, _swatch,
 )
 from .settings_dialog import SettingsDialog
-from . import printing
-from .model.document import Document
+from . import lifecycle, menus, printing, toolbar
 from .model.annotations import Annotation
 from .viewer.pdf_view import PdfView
 from .viewer import tools as T
@@ -263,8 +263,8 @@ class MainWindow(QMainWindow):
 
         self._progress("Assembling the toolbar…", 92)
         self.setStatusBar(QStatusBar())
-        self._build_menu()
-        self._build_toolbar()
+        menus.build(self)
+        toolbar.build(self)
         self._update_actions_enabled(False)
 
         # Remember the freshly-built default arrangement (for "Reset panel
@@ -274,146 +274,11 @@ class MainWindow(QMainWindow):
 
     # -- menu / toolbar ------------------------------------------------------
 
-    def _build_menu(self):
-        mb = self.menuBar()
-        m_file = mb.addMenu("&File")
-        self.act_open = m_file.addAction("&Open PDF…", self.open_pdf, QKeySequence.Open)
-        self.m_recent = m_file.addMenu("Open &Recent")
-        self._rebuild_recent_menu()
-        self.act_save = m_file.addAction("&Save markup", self.save_markup, QKeySequence.Save)
-        self.act_save_as = m_file.addAction(
-            "Save &As… (fork working file)", self.save_as_fork,
-            QKeySequence("Ctrl+Shift+S"))
-        self.act_save_as.setToolTip(
-            "Copy this file's markup into a new working file and switch to it; "
-            "the original stays untouched.")
-        self.act_export_pdf = m_file.addAction(
-            "Export annotated PDF…", self.export_pdf, QKeySequence("Ctrl+Shift+E"))
-        self.act_export_flat = m_file.addAction(
-            "Export flattened PDF (for sharing)…", self.export_flat)
-        self.act_export_flat.setToolTip(
-            "Bake the marks into the page so they render in every viewer "
-            "(browsers, Preview, thumbnails). Not re-editable — keep your "
-            "working file for edits.")
-        m_file.addSeparator()
-        self.act_print = m_file.addAction(
-            "&Print…", self.print_document, QKeySequence.Print)   # Ctrl+P
-        self.act_print.setToolTip(
-            "Print the drawing (with its marks) to any installed printer via the "
-            "system print dialog.")
-        self.act_print_preview = m_file.addAction(
-            "Print pre&view…", self.print_preview)
-        self.act_print_preview.setToolTip(
-            "See the pages before printing, then print from the preview.")
-        m_file.addSeparator()
-        m_file.addAction("Settings…", self.open_settings)
-        m_file.addSeparator()
-        m_file.addAction("Quit", self.close, QKeySequence.Quit)
-
-        m_edit = mb.addMenu("&Edit")
-        undo = self.view.undo_stack.createUndoAction(self, "Undo")
-        undo.setShortcut(QKeySequence.Undo)
-        redo = self.view.undo_stack.createRedoAction(self, "Redo")
-        redo.setShortcut(QKeySequence.Redo)
-        m_edit.addAction(undo)
-        m_edit.addAction(redo)
-
-        m_view = mb.addMenu("&View")
-        m_view.addAction("Fit width", self.view.fit_width)
-        m_view.addAction("Fit page", self.view.fit_page)
-        m_view.addAction("Zoom in", self.view.zoom_in, QKeySequence.ZoomIn)
-        m_view.addAction("Zoom out", self.view.zoom_out, QKeySequence.ZoomOut)
-        m_view.addSeparator()
-        m_view.addAction("Find…", self.view.show_search, QKeySequence.Find)
-        m_view.addAction("Find next", self.view.search_next,
-                         QKeySequence.FindNext)
-        m_view.addAction("Find previous", self.view.search_prev,
-                         QKeySequence.FindPrevious)
-        m_view.addSeparator()
-        act_cmt = m_view.addAction(
-            "Toggle comment sidebar",
-            lambda: self.comment_dock.setVisible(not self.comment_dock.isVisible()))
-        act_cmt.setShortcut("F10")
-        act_nav = m_view.addAction(
-            "Toggle navigation panel",
-            lambda: self.nav_dock.setVisible(not self.nav_dock.isVisible()))
-        act_nav.setShortcut("F9")
-        act_ref = m_view.addAction(
-            "Reference viewer (second view)",
-            lambda: self._toggle_reference_view())
-        act_ref.setShortcut("F8")
-        act_ref.setToolTip(
-            "A second, read-only view of the same PDF — keep a legend, TOC or "
-            "cover sheet in view while you work on another page.")
-        self.act_ref_view = act_ref
-        # Show/hide (and re-open a closed) main pane. Each dock has a close
-        # button, so these bring one back after it's been closed or floated away.
-        m_panes = m_view.addMenu("Panes")
-        for d in self.main_docks:
-            m_panes.addAction(d.toggleViewAction())
-        m_view.addSeparator()
-        m_view.addAction("Reset panel layout", self.reset_layout)
-
-        m_tools = mb.addMenu("&Tools")
-        m_tools.addAction("Extract pages (visual)…", lambda: self.tools_panel.show_operation("extract"))
-        m_tools.addAction("Split into ranges…", lambda: self.tools_panel.show_operation("split"))
-        m_tools.addAction("Delete pages (visual)…", lambda: self.tools_panel.show_operation("delete"))
-        m_tools.addAction("Rotate pages (visual)…", lambda: self.tools_panel.show_operation("rotate"))
-        m_tools.addSeparator()
-        m_tools.addAction("Split by sheet number… (wizard)", lambda: self.tools_panel.start_sheet_wizard())
-        m_tools.addSeparator()
-        m_tools.addAction("Combine PDFs…", lambda: self.tools_panel.open_combine())
-        m_tools.addAction("Insert PDF…", lambda: self.tools_panel.open_insert())
-        m_tools.addAction("Swap a page…", lambda: self.tools_panel.open_swap())
-        m_tools.addSeparator()
-        m_tools.addAction("PDF → Word…", lambda: self.tools_panel.open_convert())
-        m_tools.addAction("Crop / extract… (wizard)", lambda: self.tools_panel.start_crop_wizard())
-        m_tools.addSeparator()
-        self.act_run_audit = m_tools.addAction(
-            "Run design rule check…", self.run_audit, QKeySequence("F7"))
-        self.act_run_audit.setToolTip(
-            "Check the drawing against the design rules and list what to confirm")
-        self.act_import_drawings = m_tools.addAction(
-            "Import project drawings…", self.import_project_drawings)
-        self.act_import_drawings.setToolTip(
-            "Read the AutoCAD Electrical source drawings (DWG/DXF) to enrich "
-            "the design rule check")
-
-        m_help = mb.addMenu("&Help")
-        m_help.addAction("User Manual", self._show_help, QKeySequence.HelpContents)
-        m_help.addAction("About " + __app_name__, self._show_about)
-
     def _rebuild_recent_menu(self):
-        """Refill File ▸ Open Recent from the saved list (most recent first)."""
-        menu = getattr(self, "m_recent", None)
-        if menu is None:
-            return
-        menu.clear()
-        paths = self.config.recent_files
-        if not paths:
-            empty = menu.addAction("(no recent files)")
-            empty.setEnabled(False)
-            return
-        for i, path in enumerate(paths, start=1):
-            # &1..&9 then &0 for quick keyboard access
-            label = f"&{i % 10}  {os.path.basename(path)}"
-            act = menu.addAction(label)
-            act.setToolTip(path)
-            act.setStatusTip(path)
-            if os.path.exists(path):
-                act.triggered.connect(
-                    lambda _=False, p=path: self.load_document(p))
-            else:
-                # keep it listed but obviously unusable rather than silently
-                # dropping a file that's just on a disconnected drive
-                act.setEnabled(False)
-                act.setText(f"{label}   (not found)")
-        menu.addSeparator()
-        menu.addAction("Clear list", self._clear_recent_files)
+        menus.rebuild_recent(self)
 
     def _clear_recent_files(self):
-        self.config.clear_recent_files()
-        self._rebuild_recent_menu()
+        menus.clear_recent(self)
 
     def _show_help(self):
         from .help import HelpWindow
@@ -431,131 +296,6 @@ class MainWindow(QMainWindow):
             f"Electrical drawing sets.</p>"
             f"<p>{__copyright__}</p>",
         )
-
-    def _build_toolbar(self):
-        tb = QToolBar("Tools")
-        tb.setObjectName("MainToolBar")
-        tb.setMovable(False)
-        self.addToolBar(tb)
-
-        self.tool_group = QActionGroup(self)
-        self.tool_group.setExclusive(True)
-        # tools grouped by purpose; None marks a separator between groups
-        tool_defs = [
-            (T.TOOL_SELECT, "Select"),
-            None,                                            # -- freehand markup
-            (T.TOOL_HIGHLIGHT, "Highlight"), (T.TOOL_PEN, "Pen"),
-            (T.TOOL_ERASER, "Eraser"),
-            None,                                            # -- text / notes
-            (T.TOOL_COMMENT, "Comment"), (T.TOOL_TEXTBOX, "Text box"),
-            (T.TOOL_CALLOUT, "Callout"),
-            None,                                            # -- shapes
-            (T.TOOL_RECT, "Rectangle"), (T.TOOL_CIRCLE, "Circle"),
-            (T.TOOL_ARROW, "Arrow"), (T.TOOL_LINE, "Line"),
-            (T.TOOL_CLOUD, "Cloud"),
-        ]
-        # Ctrl+<digit> shortcuts are pinned to the tool, not to its position in
-        # the toolbar, so inserting Circle/Line doesn't reshuffle the shortcuts
-        # people already know. Circle and Line have none (the ten digits are
-        # taken) — they're a click away on the toolbar.
-        tool_keys = [T.TOOL_SELECT, T.TOOL_HIGHLIGHT, T.TOOL_PEN, T.TOOL_ERASER,
-                     T.TOOL_COMMENT, T.TOOL_TEXTBOX, T.TOOL_CALLOUT,
-                     T.TOOL_RECT, T.TOOL_ARROW, T.TOOL_CLOUD]
-        tool_tips = {
-            T.TOOL_CALLOUT: "Callout: click the target the arrow points at, click "
-                            "again to end the arrow, then drag out the box and "
-                            "click to finish (Esc cancels)",
-            T.TOOL_CIRCLE: "Circle: drag out an ellipse — same fill, opacity, "
-                           "resize and rotate as the rectangle",
-            T.TOOL_LINE: "Line: drag a plain line (an arrow without the head)",
-            T.TOOL_CLOUD: "Revision cloud: drag freehand, Shift+drag for a "
-                          "rectangle, or click corners and double-click / Enter "
-                          "to close",
-        }
-        self._tool_actions = {}
-        for entry in tool_defs:
-            if entry is None:
-                tb.addSeparator()
-                continue
-            tool, label = entry
-            act = QAction(label, self, checkable=True)
-            act.setData(tool)
-            # Ctrl+1..Ctrl+9 then Ctrl+0, pinned per tool (see tool_keys)
-            if tool in tool_keys:
-                n = tool_keys.index(tool) + 1
-                digit = 0 if n == 10 else n
-                act.setShortcut(QKeySequence(f"Ctrl+{digit}"))
-                tip = tool_tips.get(tool, label)
-                act.setToolTip(f"{tip}  (Ctrl+{digit})")
-                act.setStatusTip(act.toolTip())
-            else:
-                tip = tool_tips.get(tool, label)
-                act.setToolTip(tip)
-                act.setStatusTip(tip)
-            act.triggered.connect(lambda _=False, t=tool: self._activate_tool(t))
-            self.tool_group.addAction(act)
-            tb.addAction(act)
-            self._tool_actions[tool] = act
-            if tool == T.TOOL_SELECT:
-                act.setChecked(True)
-        tb.addSeparator()
-
-        # color + widths
-        self.color_btn = QPushButton("Color")
-        self.color_btn.clicked.connect(self._pick_color)
-        tb.addWidget(self.color_btn)
-        self.fill_btn = QPushButton("Fill")
-        self.fill_btn.setToolTip(
-            "Interior fill for rectangles & text boxes — pick a color and "
-            "opacity (drag alpha to 0 for no fill, 100% for an opaque cover)")
-        self.fill_btn.clicked.connect(self._pick_fill)
-        tb.addWidget(self.fill_btn)
-        tb.addWidget(QLabel(" Pen "))
-        self.pen_width = QDoubleSpinBox(); self.pen_width.setRange(0.5, 20); self.pen_width.setValue(2.0)
-        self.pen_width.valueChanged.connect(lambda v: setattr(self.view.tool, "pen_width", v))
-        tb.addWidget(self.pen_width)
-        tb.addWidget(QLabel(" Font "))
-        self.font_size = QSpinBox(); self.font_size.setRange(4, 96); self.font_size.setValue(12)
-        self.font_size.valueChanged.connect(lambda v: setattr(self.view.tool, "font_size", float(v)))
-        tb.addWidget(self.font_size)
-        self.bold = QCheckBox("B"); self.bold.toggled.connect(lambda v: setattr(self.view.tool, "bold", v))
-        self.italic = QCheckBox("I"); self.italic.toggled.connect(lambda v: setattr(self.view.tool, "italic", v))
-        tb.addWidget(self.bold); tb.addWidget(self.italic)
-        tb.addSeparator()
-
-        # rotate whole document (permanent — writes a rotated copy)
-        act_ccw = tb.addAction("↺", lambda: self.rotate_all_pages(270))
-        act_ccw.setToolTip("Rotate the view 90° counter-clockwise (in memory; marks rotate too)")
-        act_cw = tb.addAction("↻", lambda: self.rotate_all_pages(90))
-        act_cw.setToolTip("Rotate the view 90° clockwise (in memory; marks rotate too)")
-        tb.addSeparator()
-
-        # zoom (− / editable % / +) + fit
-        tb.addAction("−", self.view.zoom_out)
-        self.zoom_combo = QComboBox()
-        self.zoom_combo.setEditable(True)
-        self.zoom_combo.setInsertPolicy(QComboBox.NoInsert)
-        self.zoom_combo.addItems(["50%", "75%", "100%", "125%", "150%", "200%", "400%"])
-        self.zoom_combo.setCurrentText("100%")
-        self.zoom_combo.setFixedWidth(72)
-        self.zoom_combo.lineEdit().setAlignment(Qt.AlignCenter)
-        self.zoom_combo.setToolTip("Zoom level — pick a preset or type a percentage")
-        self.zoom_combo.textActivated.connect(self._apply_zoom_text)
-        self.zoom_combo.lineEdit().returnPressed.connect(
-            lambda: self._apply_zoom_text(self.zoom_combo.currentText()))
-        tb.addWidget(self.zoom_combo)
-        tb.addAction("+", self.view.zoom_in)
-        tb.addAction("Fit W", self.view.fit_width)
-        tb.addAction("Fit P", self.view.fit_page)
-        self.view.zoomChanged.connect(self._on_zoom_changed)
-        tb.addWidget(QLabel("  Page "))
-        self.page_spin = QSpinBox(); self.page_spin.setRange(1, 1)
-        self.page_spin.valueChanged.connect(lambda v: self.view.go_to_page(v - 1))
-        tb.addWidget(self.page_spin)
-        self.page_total = QLabel(" / 0")
-        tb.addWidget(self.page_total)
-        self._update_color_btn()
-        self._update_fill_btn()
 
     # -- zoom % readout ------------------------------------------------------
 
@@ -715,74 +455,7 @@ class MainWindow(QMainWindow):
             event.acceptProposedAction()
 
     def load_document(self, path):
-        from .model.storage import sidecar_path
-
-        def _doc_key(p):
-            return os.path.normcase(os.path.realpath(sidecar_path(p)))
-
-        # Feature 1: refuse to open the document that's already open. foo.pdf and
-        # foo.marked.pdf share a sidecar, so they count as the same document.
-        if self.document is not None and _doc_key(path) == _doc_key(self.document.path):
-            QMessageBox.information(
-                self, "Already open",
-                f"“{os.path.basename(path)}” is already open.")
-            return
-        # Opening another file drops this one's unsaved marks exactly as
-        # finally as closing the window does. Asked before anything is built,
-        # so Cancel leaves no half-opened document behind.
-        if not self._ok_to_lose_unsaved("Open another file"):
-            return
-        # Build the new document BEFORE closing the old one. Closing first meant
-        # a failed open (corrupt/locked/deleted file) returned with the window
-        # still pointed at a *closed* Document — blank pages, "closed database"
-        # on save, and search raising — which two views only made worse.
-        try:
-            doc = Document(path, ignore_patterns=self.config.ignore_patterns())
-            doc.load()
-        except Exception as e:
-            QMessageBox.critical(self, "Open failed", str(e))
-            return                      # the current document stays open and usable
-        if self.document is not None:
-            try:
-                self.document.close()
-            except Exception:
-                pass
-        self.document = doc
-        # remember it in File ▸ Open Recent (only once the open has succeeded)
-        self.config.add_recent_file(path)
-        self._rebuild_recent_menu()
-        # Feature 4: a .marked.pdf was opened but its original markup database
-        # couldn't be found, so a new one was started — let the user know.
-        if getattr(doc, "sidecar_recreated", False):
-            QMessageBox.information(
-                self, "New markup database",
-                "This .marked.pdf's original markup database wasn't found next to "
-                "it, so a new one has been started. Previously saved marks, TODOs "
-                "and extractions for this file may not be available.")
-        self.view.set_document(doc, self.config)
-        # the reference pane shows the same document (read-only), whether or not
-        # it's currently visible, so toggling it on is instant
-        self.ref_view.set_document(doc, self.config)
-        self.comment_panel.set_store(doc.store, self.config)
-        self.todo_panel.set_store(doc.store, self.config, doc)
-        self.wire_panel.set_document(doc, self.config)
-        self.component_panel.set_document(doc, self.config)
-        self.nav_panel.set_document(doc)
-        self.audit_panel.set_document(doc, self.config)
-        self._refresh_finding_marks()
-        self.tools_panel.set_default_pdf(path)
-        self.page_spin.setRange(1, max(1, doc.page_count))
-        self.page_total.setText(f" / {doc.page_count}")
-        self.setWindowTitle(f"{__app_name__} — {os.path.basename(path)}")
-        self._update_actions_enabled(True)
-        # Edge case: the PDF opened for viewing, but its name can't back a
-        # markup database (too long, or unsupported characters), so markup and
-        # saving are turned off. Tell the user why and how to fix it.
-        if not doc.sidecar_available:
-            self._warn_no_sidecar(path)
-        self.statusBar().showMessage(
-            f"Opened {os.path.basename(path)} ({doc.page_count} pages, "
-            f"{len(doc.store.all())} existing marks)", 6000)
+        lifecycle.open_document(self, path)
 
     def save_markup(self) -> bool:
         """Write the markup out. Returns whether it actually landed on disk.
@@ -802,75 +475,10 @@ class MainWindow(QMainWindow):
         return True
 
     def _ok_to_lose_unsaved(self, title: str) -> bool:
-        """Ask before dropping marks that only File > Save would have kept.
-
-        True means go ahead. The window used to close with no question and no
-        save, so every mark drawn since the last save went with it, silently,
-        on every sheet -- the one failure a markup tool does not get to have.
-
-        Only the marks and the wire/component ticks hang on this: findings,
-        waivers, sheet numbers and roles all write through as they change.
-        """
-        doc = self.document
-        if doc is None or not doc.dirty:
-            return True
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Warning)
-        box.setWindowTitle(title)
-        box.setText(f"“{os.path.basename(doc.path)}” has unsaved markup.")
-        box.setInformativeText(
-            "Marks are written to disk when you save. Discarding loses every "
-            "change made since the last save.")
-        box.setStandardButtons(QMessageBox.Save | QMessageBox.Discard
-                               | QMessageBox.Cancel)
-        box.setDefaultButton(QMessageBox.Save)
-        choice = box.exec()
-        if choice == QMessageBox.Discard:
-            return True
-        if choice != QMessageBox.Save:
-            return False                  # Cancel, or the dialog was dismissed
-        # A save that raised (an unusable sidecar, a read-only folder) is not a
-        # save. Stay where we are rather than throw the work away on their
-        # behalf -- Discard is still on the box if that is really what they mean.
-        return self.save_markup()
+        return lifecycle.ok_to_lose_unsaved(self, title)
 
     def save_as_fork(self):
-        """Fork the current markup to a new working file and switch to editing it."""
-        if self.document is None:
-            return
-        from .model.storage import original_pdf_path, sidecar_path
-        base = os.path.splitext(
-            os.path.basename(original_pdf_path(self.document.path)))[0]
-        start_dir = os.path.dirname(os.path.abspath(self.document.path))
-        suggested = os.path.join(start_dir, f"{base}-copy.pdf")
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Save As — fork to a new working file", suggested, "PDF (*.pdf)")
-        if not path:
-            return
-        if not path.lower().endswith(".pdf"):
-            path += ".pdf"
-
-        def _key(p):
-            return os.path.normcase(os.path.realpath(sidecar_path(p)))
-        if _key(path) == _key(self.document.path):
-            QMessageBox.information(
-                self, "Same file",
-                "That's the file you're already working on — choose a new name.")
-            return
-        try:
-            self.document.save_as(path)
-        except Exception as e:
-            QMessageBox.warning(self, "Save As failed", str(e))
-            return
-        new_path = self.document.path
-        self.tools_panel.set_default_pdf(new_path)
-        self.setWindowTitle(f"{__app_name__} — {os.path.basename(new_path)}")
-        self.statusBar().showMessage(
-            f"Forked to {os.path.basename(new_path)} — now editing the copy", 6000)
-        QMessageBox.information(
-            self, "Forked to a new working file",
-            f"Now working on “{os.path.basename(new_path)}”.\n"
-            f"The original file is unchanged.")
+        lifecycle.save_as_fork(self)
 
     def export_pdf(self):
         if self.document is None:
@@ -1466,27 +1074,10 @@ class MainWindow(QMainWindow):
         self._init_dock_sizes()
 
     def closeEvent(self, event):
-        # First, before a single panel is shut down or a handle released: if
-        # they cancel, the window has to still be a working window.
-        if not self._ok_to_lose_unsaved("Close"):
+        # Qt's half stays here: only the window may ignore its own close event
+        # or reach `super()`. What the DOCUMENT has to do about it is
+        # `lifecycle.on_close`.
+        if not lifecycle.on_close(self, event):
             event.ignore()
             return
-        self._save_ui_state()            # remember the dock layout + geometry
-        try:
-            self.wire_panel.shutdown()   # stop any running extraction thread
-        except Exception:
-            pass
-        try:
-            self.component_panel.shutdown()
-        except Exception:
-            pass
-        try:
-            self.tools_panel.grid.close_doc()
-        except Exception:
-            pass
-        if self.document is not None:
-            try:
-                self.document.close()
-            except Exception:
-                pass
         super().closeEvent(event)

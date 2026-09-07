@@ -738,6 +738,90 @@ the picker's signal dropped, the README losing the module, the README naming
 one that does not exist, the band margin removed, and `render_dpi` falling
 back to the paint viewport.
 
+## ...and the last three, where the row asked for a measurement before the cut
+
+The backlog row's own `remains` named the toolbar, the menus and the file
+lifecycle, and said of the first two that they *"build the same actions and may
+not be separable, which is a measurement somebody has to take before cutting"*.
+**The measurement refutes it**, and it is a better answer than a guess either
+way:
+
+- **They write 11 self-attributes each and share NONE.** The toolbar owns
+  `tool_group`, `_tool_actions` and the nine style/zoom/page widgets; the menu
+  owns ten `act_*` QActions and `m_recent`. Neither reads what the other
+  writes.
+- **They overlap in exactly ONE import** (`QKeySequence`). The toolbar needs
+  eleven widget classes the menu needs none of — because the toolbar
+  **constructs** widgets where the menu **wires** methods that already exist.
+  So the split is by kind, which is a fact about them, rather than by line
+  count, which is a fact about nothing.
+
+`app/toolbar.py`, `app/menus.py` and `app/lifecycle.py`. **2,506 → 1,879 →
+1,492 → 1,081**, and each carries the same *kind* of claim the printing gate
+does rather than a number:
+
+- **The window imports no widget class.** Measured before it was taken: moving
+  the toolbar out leaves **ten** imports unused, so the assertion is zero
+  rather than a threshold. (`QApplication` was already dead and went with them;
+  it is not counted as freed by the cut.)
+- **The window no longer imports `Document` at all** — the sharper of the two,
+  because it is about the model rather than the furniture. It asks
+  `lifecycle.open_document` for one.
+- **A wrapper exists on the window exactly where a consumer names it.**
+  `load_document` is named by `main.py` and twenty test modules, `closeEvent`
+  is Qt's own hook, `save_as_fork` and `_rebuild_recent_menu` are named by
+  tests — all four keep their names. `_build_toolbar` and `_build_menu` were
+  named by `__init__` and nothing else, so they kept none, and **both halves
+  are asserted**: a wrapper reappearing for them is a second place to look for
+  one builder.
+
+**And the wiring got a gate it never had.** `app/menus.py` names fifteen
+`win.<handler>` and cannot see the class, so a renamed method fails **when
+somebody clicks it** — not at import, not at build. The sweep walks for a bare
+`win.<name>` handed to a call and requires `MainWindow` to have it; measured at
+zero today, with `close` the one declared exemption (QWidget's, and the Quit
+action is meant to use it) gated in both directions.
+
+### The falsification found the guard nothing was checking
+
+Two arms came back DEAD, and they are the two `lifecycle.py`'s own docstring
+calls *the hard-won orderings*. They are not the same kind of DEAD:
+
+- **"closes the old document before building the new one" was a fact about my
+  READING.** It is covered — in `tests/test_v12_refview.py`, where two views
+  made the symptom worse — and my falsification subset did not include that
+  module. *If a falsification says nothing fired, suspect the reading before
+  the gate*, and here the reading was which modules I ran.
+- **"refuses to open the document that is already open" was a real gap.**
+  Measured on the whole suite rather than the subset: with the guard replaced
+  by `if False:` it is **751 tests across 58 modules, 28 skipped, all modules
+  passed**. A feature the code numbers *Feature 1* could have been deleted
+  without a red tick.
+
+What that guard prevents is not cosmetic, which is why it is worth a module of
+its own. `foo.pdf` and `foo.marked.pdf` resolve to **one** `foo.markup.db`, so
+opening the second over the first puts two `Document` objects on one SQLite
+sidecar — the thing `app/model/storage.py` exists to make impossible. It reads
+to a user as an ordinary *open a file* and it is a second writer on the marks.
+`tests/test_lifecycle.py` asserts the premise first (the two really do share a
+sidecar, or the guard would be refusing two different documents), then both
+refusals, then the complement — because a guard that refused everything
+satisfies both and leaves the application unable to open a second file.
+
+**Nineteen arms, every one firing on its own defect** — a widget class imported
+back, `Document` imported back, each module's entry point renamed, the
+`load_document` wrapper dropped, `_build_toolbar` back as a wrapper, a menu
+handler naming a method the window lacks, `MainWindow` growing a `close()` of
+its own, nothing wiring `close` any more, the handler walk finding nothing, the
+README losing a module and naming one that does not exist, `__init__` no longer
+building either, `on_close` no longer asking, the recent list never rebuilt,
+the already-open guard removed, that guard comparing PATHS rather than sidecars
+(the case `foo.marked.pdf` is about), and the complement's second open deleted.
+
+Verified in both directions, which is the only way to tell a cut from a
+withdrawal: **745 tests across 58 modules, 28 skipped before and after the move
+itself**, identical skip reasons, then 755 across 59 with the ten new gates.
+
 ## "Python 3.11+" was a claim to contributors, and only 3.11 ran
 
 `CONTRIBUTING.md` and `README.md` both say it. The CI matrix varied only the
