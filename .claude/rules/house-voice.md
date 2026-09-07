@@ -1,12 +1,13 @@
 # House voice
 
-Loaded every turn. Adapted from `pstack/unslop` (MIT). The upstream licence and
-what was dropped are in the **Pathforward** repository, at
-`kit/dsi-toolbox/rules/` beside the copy of this file every other repository is
-installed from — `ATTRIBUTION.md` and `LICENSE`, deliberately NOT beside the
-installed copy: every `.md` in `.claude/rules/` is loaded at launch, so an
-attribution file living there would cost context on every turn to explain a file
-nobody is reading at the time.
+Loaded every turn. Adapted from `pstack/unslop` (MIT), and **the licence travels
+with it**: `house-voice.LICENSE` is beside this file in every repository that
+carries it. What was dropped and why is `ATTRIBUTION.md`, which stays in
+**Pathforward** at `kit/dsi-toolbox/rules/` beside the canonical copy — and that
+split is mechanical rather than editorial. Every `.md` in `.claude/rules/` is
+loaded at launch, so a change record shipped beside the rule would cost context
+on every turn to explain a file nobody is reading at the time; a licence that is
+not a `.md` costs nothing and is where a reader looks for one.
 
 Apply to prose you write: commit messages, PR bodies, `CLAUDE.md` sections,
 plan documents, comments, and replies. Not to quoted material, not to a
