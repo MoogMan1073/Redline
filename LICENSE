@@ -1,0 +1,61 @@
+BSD Zero Clause License
+
+Copyright (c) 2026 DSI Innovations, LLC
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY
+AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM
+LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR
+OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+PERFORMANCE OF THIS SOFTWARE.
+
+
+WHY ZERO-CLAUSE, AND WHAT IT COVERS
+-----------------------------------
+
+A permissive licence grants what the repository CONTAINS, so the question this
+answers is whether anything in the tree is not the author's to give away. It is
+not: 185 tracked files, all first-party, and this repository is one of the two
+in the portfolio that is public -- swept for drawing files, exports, archives
+and customer names and measured clean.
+
+What this repository READS is a customer's drawing set. What it CARRIES is
+none: no PDF, no DXF, no exported wire list, no project. The wire-number parser
+encodes a naming convention rather than a transcribed vendor publication, which
+is the line that keeps this side of the portfolio's proprietary boundary.
+
+Zero-clause rather than MIT because MIT REQUIRES ATTRIBUTION from every
+redistributor, and that is a condition nobody here wants to impose. 0BSD is a
+normal licence grant with every condition removed -- and it is a grant rather
+than a public-domain dedication, because several jurisdictions do not let an
+author abandon copyright and a dedication then leans on a fallback clause.
+
+
+THE DESIGN-RULE HALF IS A SEPARATE, PROPRIETARY COMPONENT
+---------------------------------------------------------
+
+`requirements-drc.txt` installs PyDRC from a private repository, and PyDRC is
+licensed for use inside DSI Innovations, LLC and not for redistribution outside
+it. It is NOT in this tree and this grant does not reach it. Somebody taking
+DSI Redline under the terms above gets the reviewer and not the audit: the app
+reports the design-rule tab unavailable rather than breaking, which is what
+`tools/run_tests.py`'s skip banners and CI's `--require-drc` flag are about.
+
+
+THE BUNDLED DEPENDENCIES ARE NOT COVERED, AND ONE OF THEM IS UNRESOLVED
+-----------------------------------------------------------------------
+
+`THIRD-PARTY-NOTICES.md` and `licenses/` beside it are the record, and they are
+installed with the app rather than left at the repository root -- MIT, ISC and
+the BSD licences require the notice to travel with the DISTRIBUTED form, and a
+file in a repository satisfies nothing for somebody who downloads the `.exe`.
+
+Read that file before redistributing a build. It records, in its own words, that
+PyMuPDF declares `Dual Licensed - GNU AFFERO GPL 3.0 or Artifex Commercial
+License`, that it is bundled inside the shipped installer, and that WHICH OF THE
+TWO ARMS APPLIES HAS NOT BEEN ESTABLISHED. Nothing in this file settles that:
+this grant is about the author's own code and cannot license somebody else's.
