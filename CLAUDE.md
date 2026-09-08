@@ -893,3 +893,41 @@ repo's CI can see that, so the cross-repo sweep lives in Pathforward
 3.12 and 3.13 could not be exercised locally. CI is the verification, and
 `fail-fast: false` was already set, so a failure on the new legs cannot mask the
 3.11 result. Say which of the two you did.
+
+## The rule library is installed from git, and that URL names an account
+
+`requirements-drc.txt` is `pip install git+…/<account>/PyDRC@<ref>`, and the two
+workflows spelled the account out again in their own `pip install` lines. The
+portfolio moves to a company account as **fresh repositories built from
+`main`** — a rename leaves a redirect `pip` follows through git, and a recreated
+repository leaves none.
+
+**What that costs here is measured rather than guessed at, and it is not a red
+build.** `pip install -r requirements-drc.txt` failing is loud; what follows is
+the failure this repository already refuses everywhere: the audit tests
+**skip**, `--require-drc` is what turns that into a red run, and the CI job only
+passes the flag *"whenever the PyDRC token is present"*. So a stale account plus
+a missing secret is a green run with the whole design-rule half unexercised —
+the shape `tools/run_tests.py`'s banners exist for, arriving through the one
+door they do not watch.
+
+- **The two workflow copies are DERIVED and the requirement is GATED**, and the
+  split is the standing one: a workflow step runs in this repository's own
+  Actions, so `${{ github.repository_owner }}` is the owner it needs; a
+  `requirements` line has no expression to derive one with at all, so it stays a
+  literal with a gate that compares it against **this checkout's own remote**
+  and goes red on the day it stops matching.
+- **THE ORACLE IS GIT, never the other declaration.** Comparing the requirement
+  against a second copy of itself says only that the two agree, which they would
+  while both were stale together.
+- **`test_the_gate_can_actually_fire`** exists because on a correct tree every
+  URL matches and a comparison that answered a constant would be
+  indistinguishable from one that works — the dead gate a sibling repository's
+  copy of this check was measured to be.
+- **The pin itself is untouched.** `packaging/pydrc-ref.txt` names a *ref* and
+  is resolved to a SHA before installing; a ref is not an account and the move
+  does not touch it.
+
+The portfolio-wide sweep is Pathforward's `scripts/transfer_readiness.py`, which
+classifies this repository at **1 gated** — the requirement line, with this test
+named as what keeps it correct.

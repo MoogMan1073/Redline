@@ -73,7 +73,7 @@ jobs:
         if: env.PYDRC_TOKEN != ''
         shell: bash
         run: |
-          pip install "pydrc[dxf] @ git+https://x-access-token:${PYDRC_TOKEN}@github.com/MoogMan1073/PyDRC@main"
+          pip install "pydrc[dxf] @ git+https://x-access-token:${PYDRC_TOKEN}@github.com/${{ github.repository_owner }}/PyDRC@main"
 
       # Qt needs a display; offscreen gives it one. Each test module runs in
       # its own process -- see tools/run_tests.py for why.

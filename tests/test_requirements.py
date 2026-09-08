@@ -42,6 +42,91 @@ class TestRequirements(unittest.TestCase):
             self.assertIn(dist, base)
 
 
+class TestTheRuleLibrarysAccountIsNotStale(unittest.TestCase):
+    """`requirements-drc.txt` names PyDRC's ACCOUNT, and pip has no expression.
+
+    The two workflows that install the same library derive it —
+    `${{ github.repository_owner }}` is whoever owns the repo the run belongs
+    to, and PyDRC moves accounts alongside this repository. A requirements file
+    is static text and cannot, so it carries a literal.
+
+    **A repo RENAME leaves a redirect that `pip install git+` follows; a repo
+    recreated FRESH under another account leaves none.** So the literal would go
+    stale silently for every developer running the documented
+    `pip install -r requirements-drc.txt` — the install fails, and the failure
+    reads as a credentials problem, which is exactly what that file's own header
+    tells you to suspect.
+
+    So it is checked against **this checkout's own origin remote**, which is the
+    one thing here that knows the account. The day the repo moves this fails and
+    names the single line to edit, which is strictly better than a checklist
+    item somebody has to remember on a day with a great deal else going on.
+    """
+
+    def _origin_owner(self):
+        import subprocess
+        try:
+            url = subprocess.run(
+                ["git", "-C", HERE, "remote", "get-url", "origin"],
+                capture_output=True, text=True, timeout=10).stdout.strip()
+        except (OSError, subprocess.SubprocessError) as exc:  # pragma: no cover
+            self.skipTest(f"cannot run git to read the origin remote: {exc}")
+        m = re.search(r"[/:]([^/]+)/[^/]+?(?:\.git)?$", url)
+        if not m:
+            # Three states, never two: a tarball or a checkout with no remote
+            # is not the same as a stale account, and reporting the first as
+            # the second sends somebody editing a line that is correct.
+            self.skipTest(
+                f"no GitHub origin remote to read the account from (got {url!r})")
+        return m.group(1)
+
+    def test_the_declared_account_is_the_one_this_checkout_belongs_to(self):
+        want = self._origin_owner()
+        for line in _lines("requirements-drc.txt"):
+            for m in re.finditer(r"github\.com/([^/]+)/", line):
+                self.assertEqual(
+                    m.group(1), want,
+                    f"requirements-drc.txt installs from {m.group(1)}/ while "
+                    f"this checkout belongs to {want}/. PyDRC moves accounts "
+                    "with this repository and a fresh repo gets NO redirect, "
+                    "so `pip install -r requirements-drc.txt` 404s and reads "
+                    "as a credentials failure. Edit the one line.")
+
+    def test_the_workflows_do_not_write_the_account_down_at_all(self):
+        """They can derive it, so a literal there is a second copy that drifts."""
+        for name in ("build-windows.yml", "tests.yml"):
+            path = os.path.join(HERE, ".github", "workflows", name)
+            with open(path, encoding="utf-8") as fh:
+                # Comments are prose, and the paragraph above the install step
+                # in tests.yml necessarily names the library it installs -- the
+                # gate-fired-by-its-own-explanation trap. Tighten, never waive.
+                code = "\n".join(ln for ln in fh.read().splitlines()
+                                 if not ln.lstrip().startswith("#"))
+            for m in re.finditer(r"github\.com/([^/$][^/]*)/PyDRC", code):
+                self.fail(
+                    f"{name} installs PyDRC from a written-down account "
+                    f"({m.group(1)}); use "
+                    "`github.com/${{ github.repository_owner }}/PyDRC`, which "
+                    "is right before an account move and after one")
+
+    def test_the_gate_can_actually_fire(self):
+        """Both halves, on constructed lines, because both fire zero times today.
+
+        The requirements half is live only on the day of a move and the
+        workflow half is live only if somebody rewrites a derivation back to a
+        literal, so neither can be floored against the tree as it stands.
+        """
+        pat = re.compile(r"github\.com/([^/$][^/]*)/PyDRC")
+        self.assertTrue(pat.search(
+            'pip install "pydrc @ git+https://github.com/some-org/PyDRC@main"'))
+        self.assertIsNone(pat.search(
+            'url="https://github.com/${{ github.repository_owner }}/PyDRC"'))
+        self.assertEqual(
+            re.search(r"[/:]([^/]+)/[^/]+?(?:\.git)?$",
+                      "git@github.com:some-org/Redline.git").group(1),
+            "some-org", "the origin-remote reader no longer parses an ssh url")
+
+
 class TestTheReproducibilityClaimMatchesThePinning(unittest.TestCase):
     """`packaging/pydrc-ref.txt` said rebuilding a tag years later produces the
     same installer. It pins **one dependency of ten**.
