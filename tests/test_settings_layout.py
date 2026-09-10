@@ -1,8 +1,22 @@
 """Settings dialog is organised into tabs (so it never outgrows the screen),
 and both the Wire Numbers and Component Labels tabs expose a scanned-page
-AI/OCR engine picker."""
+AI/OCR engine picker.
+
+Also the gate that keeps `docs/Settings.md` in step with the dialog. That page
+named **four** tabs where the dialog builds **five**, and had no section for
+either *Component labels* or *Design rules* — so two whole tabs, including the
+family-code list and every design-rule control, were undocumented in the one
+page a user opens to find out what a setting does. Nothing was wrong; nobody
+re-read it.
+
+The tab names are read **off the running dialog**, never off a second reading
+of `app/main_window.py`: the document describes what a person sees, and a
+source scan would form its own opinion about which `addTab` calls run.
+"""
 
 import os
+import pathlib
+import re
 import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -22,7 +36,7 @@ class TestSettingsTabs(unittest.TestCase):
 
     def _dialog(self):
         from app.config import AppConfig
-        from app.main_window import SettingsDialog
+        from app.settings_dialog import SettingsDialog
         return SettingsDialog(AppConfig())
 
     def test_settings_split_into_tabs(self):
@@ -49,6 +63,41 @@ class TestSettingsTabs(unittest.TestCase):
         finally:
             d.config.set("wire/extract_method", original)
             d.config.sync()
+
+    # ---- the manual and the dialog ----
+
+    _DOC = pathlib.Path(__file__).resolve().parent.parent / "docs" / "Settings.md"
+
+    def _doc_sections(self):
+        return [m.group(1).strip() for m in
+                re.finditer(r"^## +(.+)$", self._DOC.read_text(encoding="utf-8"),
+                            flags=re.M)]
+
+    def test_the_manual_has_a_section_per_tab_in_the_dialogs_own_order(self):
+        d = self._dialog()
+        tw = d.findChild(QTabWidget)
+        tabs = [tw.tabText(i) for i in range(tw.count())]
+        # The floor. Every assertion here is satisfied by a dialog that built
+        # no tabs and a page with no `##` headings, which is what a rename of
+        # either degrades to — and an empty list matching an empty list reads
+        # exactly like a page in perfect agreement with the code.
+        self.assertGreaterEqual(len(tabs), 4, f"the dialog built {tabs}")
+        self.assertEqual(self._doc_sections(), tabs, (
+            "docs/Settings.md's sections and the dialog's tabs have parted "
+            "company. One section per tab, in the order they appear — a tab "
+            "with no section is a control nobody can look up."))
+
+    def test_the_two_tabs_that_were_undocumented_carry_their_own_controls(self):
+        """A section heading is cheap; what the row was about is the CONTENT
+        under it. These are the settings that had no mention anywhere: the
+        family-code list, and the design-rule severity table."""
+        text = self._DOC.read_text(encoding="utf-8")
+        for phrase in ("Family codes", "unknown family", "Labels per device",
+                       "Draw findings on the sheet", "ODA File Converter",
+                       "Severity"):
+            self.assertIn(phrase, text,
+                          f"{phrase!r} is a Settings control the manual does "
+                          "not mention")
 
 
 @unittest.skipUnless(_QT_OK, "PySide6 not available")

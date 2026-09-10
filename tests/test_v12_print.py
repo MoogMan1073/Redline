@@ -26,6 +26,7 @@ needs_native_print = unittest.skipIf(
 
 import fitz
 
+from app import printing
 from app.model.annotations import Annotation, KIND_RECT
 
 try:
@@ -105,7 +106,7 @@ class TestPrint(unittest.TestCase):
         target = QRect(0, 0, 4792, 6853)          # a 600 dpi Letter viewport
         work = win.document.annotated_fitz()
         try:
-            scale, w, h, x, y = win._print_fit(work[0].rect, target)
+            scale, w, h, x, y = printing.fit(work[0].rect, target)
         finally:
             work.close()
         # fills one axis of the sheet exactly, and is centred on the other
@@ -128,7 +129,7 @@ class TestPrint(unittest.TestCase):
         printer.setResolution(600)
         printer.setOutputFormat(QPrinter.PdfFormat)
         printer.setOutputFileName(out)
-        win._print_to(printer)
+        printing.paint_document(win.document, printer, win.print_options)
         chk = fitz.open(out)
         try:
             infos = chk[0].get_image_info()
@@ -152,7 +153,7 @@ class TestPrint(unittest.TestCase):
         try:
             page = work[0]
             src_aspect = page.rect.width / page.rect.height   # read before close
-            scale, w, h, x, y = win._print_fit(page.rect, target)
+            scale, w, h, x, y = printing.fit(page.rect, target)
         finally:
             work.close()
         self.assertAlmostEqual(w / h, src_aspect, places=2)
@@ -175,14 +176,14 @@ class TestPrint(unittest.TestCase):
         printer.setResolution(600)
         printer.setOutputFormat(QPrinter.PdfFormat)
         printer.setOutputFileName(out)
-        win._print_to(printer)
+        printing.paint_document(win.document, printer, win.print_options)
         chk = fitz.open(out)
         try:
             infos = chk[0].get_image_info()
             self.assertGreater(len(infos), 1, "large sheet should be banded")
             for im in infos:
                 self.assertLessEqual(im["width"] * im["height"],
-                                     win._PRINT_BAND_PX * 1.02)
+                                     printing.PRINT_BAND_PX * 1.02)
             # ...and the bands together still cover the page at full resolution
             widest = max(infos, key=lambda i: i["width"])
             span_in = fitz.Rect(widest["bbox"]).width / 72.0
@@ -202,8 +203,8 @@ class TestPrint(unittest.TestCase):
             canvas = QImage(10, 10, QImage.Format_RGB888)
             painter = QPainter(canvas)
             try:
-                win._print_page(painter, work[0], QRect(0, 0, 0, 0))
-                win._print_page(painter, work[0], QRect(0, 0, -50, -50))
+                printing.paint_page(painter, work[0], QRect(0, 0, 0, 0))
+                printing.paint_page(painter, work[0], QRect(0, 0, -50, -50))
             finally:
                 painter.end()
         finally:
@@ -221,7 +222,7 @@ class TestPrint(unittest.TestCase):
         printer.setOutputFormat(QPrinter.PdfFormat)
         printer.setOutputFileName(os.path.join(tmp, "tiny.pdf"))
         printer.setPageSize(QPageSize(QSizeF(20, 20), QPageSize.Point))
-        win._print_to(printer)          # must not raise
+        printing.paint_document(win.document, printer, win.print_options)          # must not raise
 
     def test_bands_join_without_seams(self):
         # The band boundaries must be invisible: banded output has to match a
@@ -246,12 +247,12 @@ class TestPrint(unittest.TestCase):
                 canvas = QImage(1200, 1550, QImage.Format_RGB888)
                 canvas.fill(0xFFFFFFFF)
                 painter = QPainter(canvas)
-                keep = MainWindow._PRINT_BAND_PX
-                MainWindow._PRINT_BAND_PX = band_px
+                keep = printing.PRINT_BAND_PX
+                printing.PRINT_BAND_PX = band_px
                 try:
-                    MainWindow._print_page(painter, doc[0], target)
+                    printing.paint_page(painter, doc[0], target)
                 finally:
-                    MainWindow._PRINT_BAND_PX = keep
+                    printing.PRINT_BAND_PX = keep
                     painter.end(); doc.close()
                 return canvas
 
@@ -279,7 +280,7 @@ class TestPrint(unittest.TestCase):
         printer = QPrinter(QPrinter.HighResolution)
         printer.setOutputFormat(QPrinter.PdfFormat)
         printer.setOutputFileName(out)
-        win._print_to(printer)
+        printing.paint_document(win.document, printer, win.print_options)
         self.assertTrue(os.path.exists(out) and os.path.getsize(out) > 0)
         chk = fitz.open(out)
         try:
@@ -295,7 +296,7 @@ class TestPrint(unittest.TestCase):
         printer.setOutputFormat(QPrinter.PdfFormat)
         printer.setOutputFileName(out)
         printer.setFromTo(2, 3)          # print only pages 2–3
-        win._print_to(printer)
+        printing.paint_document(win.document, printer, win.print_options)
         chk = fitz.open(out)
         try:
             self.assertEqual(chk.page_count, 2)
@@ -334,7 +335,7 @@ class TestPrint(unittest.TestCase):
                 pic = QPicture()                   # what the preview paints into
                 painter = QPainter(pic)
                 try:
-                    win._print_page(painter, work[0], target)
+                    printing.paint_page(painter, work[0], target)
                 finally:
                     painter.end()
             finally:
@@ -344,14 +345,14 @@ class TestPrint(unittest.TestCase):
             self.assertEqual(len(captured), 1,
                              f"{label}: preview must be a single raster")
             scale, pw, ph = captured[0]
-            self.assertLessEqual(scale, win._PREVIEW_SCALE + 1e-9,
+            self.assertLessEqual(scale, printing.PREVIEW_SCALE + 1e-9,
                                  f"{label}: preview exceeded its dpi cap")
             self.assertLessEqual((pw * scale) * (ph * scale),
-                                 win._PREVIEW_MAX_PX * 1.02,
+                                 printing.PREVIEW_MAX_PX * 1.02,
                                  f"{label}: preview exceeded its pixel budget")
         # the big sheet must be the case where the pixel budget, not the dpi cap,
         # is what bites — otherwise this test isn't checking anything new
-        self.assertLess(captured[0][0], win._PREVIEW_SCALE)
+        self.assertLess(captured[0][0], printing.PREVIEW_SCALE)
 
     def test_preview_is_detected_from_the_paint_engine(self):
         # _print_page decides which path to take from the painter's engine:
@@ -361,13 +362,13 @@ class TestPrint(unittest.TestCase):
         pic = QPicture()
         p = QPainter(pic)
         try:
-            self.assertTrue(win._is_preview(p))
+            self.assertTrue(printing.is_preview(p))
         finally:
             p.end()
         img = QImage(50, 50, QImage.Format_RGB888)
         p = QPainter(img)
         try:
-            self.assertFalse(win._is_preview(p))
+            self.assertFalse(printing.is_preview(p))
         finally:
             p.end()
 
@@ -379,7 +380,7 @@ class TestPrint(unittest.TestCase):
         printer.setOutputFormat(QPrinter.PdfFormat)
         printer.setOutputFileName(out)
         seen = []
-        painted = win._print_to(printer, on_page=lambda d, t: (seen.append((d, t))
+        painted = printing.paint_document(win.document, printer, win.print_options, on_page=lambda d, t: (seen.append((d, t))
                                                               or True))
         self.assertEqual(seen, [(0, 3), (1, 3), (2, 3)])
         self.assertEqual(painted, 3)
@@ -393,7 +394,7 @@ class TestPrint(unittest.TestCase):
         printer = QPrinter(QPrinter.ScreenResolution)
         printer.setOutputFormat(QPrinter.PdfFormat)
         printer.setOutputFileName(out)
-        painted = win._print_to(printer, on_page=lambda d, t: d < 2)
+        painted = printing.paint_document(win.document, printer, win.print_options, on_page=lambda d, t: d < 2)
         self.assertEqual(painted, 2)
         chk = fitz.open(out)
         try:
@@ -410,7 +411,7 @@ class TestPrint(unittest.TestCase):
         printer = QPrinter(QPrinter.ScreenResolution)
         printer.setOutputFormat(QPrinter.PdfFormat)
         printer.setOutputFileName(out)
-        painted = win._print_to(printer, on_page=lambda d, t: False)
+        painted = printing.paint_document(win.document, printer, win.print_options, on_page=lambda d, t: False)
         self.assertEqual(painted, 0)
         if os.path.exists(out) and os.path.getsize(out):
             chk = fitz.open(out)
@@ -428,7 +429,7 @@ class TestPrint(unittest.TestCase):
         printer.setOutputFileName(out)
         printer.setFromTo(2, 4)
         totals = []
-        win._print_to(printer, on_page=lambda d, t: (totals.append(t) or True))
+        printing.paint_document(win.document, printer, win.print_options, on_page=lambda d, t: (totals.append(t) or True))
         self.assertEqual(totals, [3, 3, 3])
 
     def test_render_dpi_uses_the_device_not_the_viewport(self):
@@ -446,7 +447,7 @@ class TestPrint(unittest.TestCase):
             def physicalDpiX(self): return self._p
             def physicalDpiY(self): return self._p
 
-        dpi = MainWindow._print_render_dpi
+        dpi = printing.render_dpi
         self.assertEqual(dpi(Fake(96, 600)), 600)     # the Windows situation
         self.assertEqual(dpi(Fake(96, 1200)), 1200)   # high-res driver
         self.assertEqual(dpi(Fake(96, 0)), 600)       # unknown device: floor
@@ -473,7 +474,7 @@ class TestPrint(unittest.TestCase):
         printer = ScreenPinned()
         printer.setOutputFormat(QPrinter.PdfFormat)
         printer.setOutputFileName(out)
-        win._print_to(printer)
+        printing.paint_document(win.document, printer, win.print_options)
         chk = fitz.open(out)
         try:
             infos = chk[0].get_image_info()
@@ -509,12 +510,12 @@ class TestPrint(unittest.TestCase):
             canvas = QImage(768, 994, QImage.Format_RGB888)
             canvas.fill(0xFFFFFFFF)
             painter = QPainter(canvas)
-            keep = MainWindow._PRINT_BAND_PX
-            MainWindow._PRINT_BAND_PX = band_px
+            keep = printing.PRINT_BAND_PX
+            printing.PRINT_BAND_PX = band_px
             try:
-                MainWindow._print_page(painter, doc[0], target, dpi=600)
+                printing.paint_page(painter, doc[0], target, dpi=600)
             finally:
-                MainWindow._PRINT_BAND_PX = keep
+                printing.PRINT_BAND_PX = keep
                 painter.end(); doc.close()
             return canvas
 
@@ -589,7 +590,7 @@ class TestPrint(unittest.TestCase):
             return runs
 
         plain = widths()
-        with MainWindow._min_line_width(0.75 / 72 * 600):     # Heavy, in px
+        with printing.min_line_width(0.75 / 72 * 600):     # Heavy, in px
             boosted = widths()
         self.assertEqual(len(plain), len(boosted))
         self.assertGreater(boosted[0], plain[0], "hairline was not thickened")
@@ -615,7 +616,7 @@ class TestPrint(unittest.TestCase):
             return int((band < 128).sum())
 
         plain = text_ink()
-        with MainWindow._min_line_width(0.75 / 72 * 600):
+        with printing.min_line_width(0.75 / 72 * 600):
             self.assertEqual(text_ink(), plain)
 
     def test_min_line_width_is_always_restored(self):
@@ -627,7 +628,7 @@ class TestPrint(unittest.TestCase):
         p = self._hairline_pdf(tmp)
         before = self._hairline_px(p)
 
-        with MainWindow._min_line_width(0.75 / 72 * 600):
+        with printing.min_line_width(0.75 / 72 * 600):
             self.assertGreater(self._hairline_px(p), before)
         self.assertEqual(self._hairline_px(p), before)
 
@@ -635,7 +636,7 @@ class TestPrint(unittest.TestCase):
             pass
 
         with self.assertRaises(Boom):
-            with MainWindow._min_line_width(0.75 / 72 * 600):
+            with printing.min_line_width(0.75 / 72 * 600):
                 raise Boom()
         self.assertEqual(self._hairline_px(p), before,
                          "the global floor leaked after an exception")
@@ -646,7 +647,7 @@ class TestPrint(unittest.TestCase):
         p = self._hairline_pdf(tmp)
         before = self._hairline_px(p)
         for value in (0, 0.0, None):
-            with MainWindow._min_line_width(value):
+            with printing.min_line_width(value):
                 self.assertEqual(self._hairline_px(p), before)
 
     @needs_native_print
@@ -661,13 +662,13 @@ class TestPrint(unittest.TestCase):
         win = MainWindow(); win.load_document(src)
 
         def ink(min_pt):
-            win._print_min_line_pt = min_pt
+            win.print_options.min_line_pt = min_pt
             out = os.path.join(tmp, f"out{min_pt}.pdf")
             pr = QPrinter(QPrinter.ScreenResolution)
             pr.setResolution(600)
             pr.setOutputFormat(QPrinter.PdfFormat)
             pr.setOutputFileName(out)
-            win._print_to(pr)
+            printing.paint_document(win.document, pr, win.print_options)
             doc = fitz.open(out)
             try:
                 pm = doc[0].get_pixmap(matrix=fitz.Matrix(300 / 72, 300 / 72),
@@ -690,7 +691,7 @@ class TestPrint(unittest.TestCase):
         # hang; _new_printer builds a ScreenResolution printer raised to a
         # working 600 dpi (fine line work and small text print crisply).
         win, _ = self._win_with(pages=1)
-        p = win._new_printer()
+        p = printing.new_printer(win.document.path)
         self.assertEqual(p.resolution(), 600)
 
     @needs_native_print
@@ -723,38 +724,93 @@ class TestPrint(unittest.TestCase):
                                lambda d: QPrintDialog.Rejected):
             win.print_document()   # must simply return, no exception
 
+    def test_the_window_hands_the_job_its_own_document_and_options(self):
+        """Both wrappers pass what the window owns, and nothing else.
+
+        Found by falsification: replacing `self.print_options` with `None` in
+        `print_preview` fired NOTHING, because no test drove that wrapper at
+        all — the preview's own controls are exercised directly against the
+        module. The two menu actions are the window's whole remaining half of
+        printing, so the wiring is what has to be checked here; the dialogs
+        themselves are `app/printing.py`'s and are tested there.
+        """
+        from unittest import mock
+        from app import printing as P
+        win, _ = self._win_with(pages=1)
+        for wrapper, target in (("print_document", "run_print_dialog"),
+                                ("print_preview", "run_print_preview")):
+            seen = []
+            with mock.patch.object(
+                    P, target,
+                    lambda *a, **k: seen.append(a) or "printed 1 page"):
+                getattr(win, wrapper)()
+            self.assertEqual(len(seen), 1, wrapper)
+            parent, doc, opts = seen[0]
+            self.assertIs(parent, win, wrapper)
+            self.assertIs(doc, win.document, wrapper)
+            self.assertIs(opts, win.print_options, wrapper)
+
+    def test_the_preview_line_weight_picker_writes_what_the_job_reads(self):
+        """The picker's other half — and it was untested until falsification.
+
+        `options.min_line_pt = …` in `_add_line_weight_picker` could be
+        deleted with every test still green: the weight tests set the option
+        directly and paint with it, so what was covered was the JOB reading it
+        and never the control writing it. The markups toggle beside it had
+        both halves; this one had one.
+        """
+        from PySide6.QtWidgets import QComboBox, QToolBar
+        from app import printing as P
+        from app.config import PRINT_LINE_WEIGHTS
+        win, _ = self._win_with(pages=1)
+        # A plain toolbar rather than a QPrintPreviewDialog: the picker only
+        # needs something to add itself to, and the preview dialog is the part
+        # `needs_native_print` exists to keep off the Windows runner.
+        tb = QToolBar()
+        P._add_line_weight_picker(tb, tb, win.print_options)
+        combo = tb.findChild(QComboBox)
+        self.assertIsNotNone(combo)
+        # Pick an entry that is not the one it opened on, so a picker that
+        # wrote nothing cannot pass by accident.
+        want = next(i for i in range(combo.count())
+                    if float(combo.itemData(i) or 0.0)
+                    != win.print_options.min_line_pt)
+        combo.setCurrentIndex(want)
+        self.assertEqual(win.print_options.min_line_pt,
+                         float(PRINT_LINE_WEIGHTS[want][1]))
+
     def test_include_marks_defaults_on(self):
         win, _ = self._win_with(pages=1)
-        self.assertTrue(win._print_include_marks)
+        self.assertTrue(win.print_options.include_marks)
 
     @needs_native_print
     def test_preview_toggle_flips_include_marks(self):
         from PySide6.QtPrintSupport import QPrintPreviewDialog
         from PySide6.QtGui import QAction
         win, _ = self._win_with(pages=1)
-        printer = win._new_printer()
+        printer = printing.new_printer(win.document.path)
         preview = QPrintPreviewDialog(printer, win)
-        win._add_markups_toggle(preview)
+        printing._add_markups_toggle(preview, win.print_options)
         act = next((a for a in preview.findChildren(QAction)
                     if a.text() == "Include markups"), None)
         self.assertIsNotNone(act)
         self.assertTrue(act.isChecked())            # default on
         act.trigger()                                # uncheck it
-        self.assertFalse(win._print_include_marks)
+        self.assertFalse(win.print_options.include_marks)
         act.trigger()                                # back on
-        self.assertTrue(win._print_include_marks)
+        self.assertTrue(win.print_options.include_marks)
 
     @needs_native_print
     def test_print_clean_when_marks_off(self):
         # printing with marks off must still emit all pages (just no app marks)
         from PySide6.QtPrintSupport import QPrinter
         win, tmp = self._win_with(pages=2)
-        win._print_include_marks = False
+        win.print_options.include_marks = False
         out = os.path.join(tmp, "clean.pdf")
         printer = QPrinter(QPrinter.HighResolution)
         printer.setOutputFormat(QPrinter.PdfFormat)
         printer.setOutputFileName(out)
-        win._print_to(printer)
+        printing.paint_document(win.document, printer, win.print_options)
         chk = fitz.open(out)
         try:
             self.assertEqual(chk.page_count, 2)

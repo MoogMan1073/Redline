@@ -68,7 +68,9 @@ it (loudly) when it does not. To set it up:
 
 1. Create a fine-grained personal access token with **Contents: read-only** on
    `MoogMan1073/PyDRC`.
-2. In `MoogMan1073/PDF_MarkupApp`, go to **Settings ▸ Secrets and variables ▸
+2. In `MoogMan1073/Redline` (the repository was renamed from `PDF_MarkupApp`;
+   GitHub redirects a clone but not a settings page), go to
+   **Settings ▸ Secrets and variables ▸
    Actions ▸ New repository secret**.
 3. Name it `PYDRC_TOKEN` and paste the token.
 

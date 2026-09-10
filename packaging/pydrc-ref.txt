@@ -3,9 +3,28 @@
 #
 # `main` while developing, so the app tracks the rule library. Set it to a
 # PyDRC tag before tagging a release, and commit that change *first* -- the
-# app's tag then captures which rules its installer contains, and rebuilding
-# that tag years later produces the same installer. Left at `main`, a rebuild
-# picks up whatever the library has become since.
+# app's tag then captures WHICH RULES its installer contains. Left at `main`,
+# a rebuild picks up whatever the library has become since.
+#
+# THIS FILE PINS ONE DEPENDENCY OF TEN, and the line above used to end
+# "...and rebuilding that tag years later produces the same installer", which
+# is a claim about the whole artifact that one pin cannot support. Measured:
+# `requirements.txt` carries nine unbounded floors (`PySide6>=6.6`,
+# `PyMuPDF>=1.25`, `openpyxl>=3.1`, `python-docx>=1.1`, `pdf2docx>=0.5.8`,
+# `pytesseract>=0.3.10`, `Pillow>=10.0`, `anthropic>=0.40`, `PyYAML>=6.0`) and
+# `packaging/requirements-build.txt` a tenth (`pyinstaller>=6.3`) -- so a
+# rebuild of an old tag resolves each of those to whatever is newest on the
+# day, and the PDF engine and the whole GUI toolkit are among them.
+#
+# What a rebuild DOES reproduce is the rule set, which is the question this
+# file exists to answer and the one a design-rule finding turns on.
+# Reproducing the installer needs a lock file for the other ten, which is a
+# separate change and is not made here.
+#
+# `tests/test_requirements.py::TestTheReproducibilityClaimMatchesThePinning`
+# is what keeps the two in step in both directions: the strong sentence is
+# refused while an unbounded floor remains, and the day they are all pinned
+# the narrow one is refused as an understatement.
 #
 # Whatever this names is resolved to a commit SHA and that SHA is installed,
 # so the ref cannot move underneath a build in progress. The SHA is printed in

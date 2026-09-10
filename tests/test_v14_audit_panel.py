@@ -292,7 +292,7 @@ class TestWaiveDialog(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
 
     def test_a_reason_is_required(self):
-        from app.main_window import WaiveDialog
+        from app.dialogs import WaiveDialog
         dlg = WaiveDialog(_findings()[0], "LWH")
         self.assertFalse(dlg._ok.isEnabled())
         dlg.reason.setText("   ")
@@ -302,7 +302,7 @@ class TestWaiveDialog(unittest.TestCase):
         self.assertEqual(dlg.values(), ("Accepted by client", "LWH"))
 
     def test_shows_what_is_being_waived(self):
-        from app.main_window import WaiveDialog
+        from app.dialogs import WaiveDialog
         from PySide6.QtWidgets import QLabel
         dlg = WaiveDialog(_findings()[0])
         texts = " ".join(w.text() for w in dlg.findChildren(QLabel))
@@ -317,7 +317,7 @@ class TestSettingsTab(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
 
     def test_design_rules_tab_exists(self):
-        from app.main_window import SettingsDialog
+        from app.settings_dialog import SettingsDialog
         from app.config import AppConfig
         dlg = SettingsDialog(AppConfig())
         tabs = dlg.findChild(QTabWidget)
@@ -326,7 +326,7 @@ class TestSettingsTab(unittest.TestCase):
 
     @unittest.skipUnless(HAVE_PYDRC, "PyDRC is not installed")
     def test_lists_the_rules_and_round_trips_a_change(self):
-        from app.main_window import SettingsDialog
+        from app.settings_dialog import SettingsDialog
         from app.config import AppConfig
         config = AppConfig()
         before_disabled = config.audit_disabled_rules()

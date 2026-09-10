@@ -72,7 +72,7 @@ jobs:
             exit 1
           fi
           echo "PyDRC ref requested: $ref"
-          url="https://x-access-token:${PYDRC_TOKEN}@github.com/MoogMan1073/PyDRC"
+          url="https://x-access-token:${PYDRC_TOKEN}@github.com/${{ github.repository_owner }}/PyDRC"
           # An annotated tag resolves to two lines -- the tag object, then the
           # commit it points at as "<ref>^{}". The commit is the one to
           # install; the tag object is not a thing pip can check out.

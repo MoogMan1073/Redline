@@ -32,7 +32,7 @@ class TestFillDialog(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
 
     def test_opacity_slider_reflects_and_returns(self):
-        from app.main_window import FillDialog
+        from app.dialogs import FillDialog
         d = FillDialog((0.2, 0.4, 0.6), 0.5)
         self.assertEqual(d.slider.value(), 50)
         self.assertFalse(d.none_cb.isChecked())
@@ -41,7 +41,7 @@ class TestFillDialog(unittest.TestCase):
         self.assertAlmostEqual(op, 0.5)
 
     def test_no_fill_option(self):
-        from app.main_window import FillDialog
+        from app.dialogs import FillDialog
         d = FillDialog(None, 1.0)
         self.assertTrue(d.none_cb.isChecked())
         self.assertEqual(d.result_fill(), (None, 1.0))
@@ -52,7 +52,7 @@ class TestFillDialog(unittest.TestCase):
         self.assertIsNone(d2.result_fill()[0])
 
     def test_zero_opacity_means_no_fill(self):
-        from app.main_window import FillDialog
+        from app.dialogs import FillDialog
         d = FillDialog((1, 0, 0), 1.0)
         d.slider.setValue(0)
         self.assertIsNone(d.result_fill()[0])
