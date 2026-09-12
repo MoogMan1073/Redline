@@ -84,6 +84,70 @@ pip() { echo "PIP-CALLED: $*"; }
 """
 
 
+_MARKER = "BASH-CAN-RUN-A-SCRIPT"
+
+
+def _bash_candidates():
+    """Every bash worth trying, most-faithful first.
+
+    Git bash is not a fallback here, it is the SHELL THE STEP IS ACTUALLY RUN
+    WITH: the workflow declares `shell: bash`, and on `windows-latest` Actions
+    maps that to `C:\Program Files\Git\bin\bash.exe`. Trying it first is what
+    makes this harness drive the same interpreter the workflow does, rather
+    than whatever answers to the name.
+    """
+    seen, out = set(), []
+    for cand in (r"C:\Program Files\Git\bin\bash.exe",
+                 r"C:\Program Files\Git\usr\bin\bash.exe",
+                 shutil.which("bash"), "/bin/bash", "/usr/bin/bash"):
+        if cand and cand not in seen:
+            seen.add(cand)
+            out.append(cand)
+    return out
+
+
+def _usable_bash(candidates=None):
+    """The first bash that can actually RUN something, not merely be found.
+
+    `shutil.which("bash")` was the whole test, and on `windows-latest` it
+    finds `C:\Windows\System32\bash.exe` -- the WSL launcher, present on
+    every Windows image and useless without a distribution installed. It
+    answers every invocation with *"Windows Subsystem for Linux has no
+    installed distributions"*, in UTF-16LE, and exits 1.
+
+    So the class was NOT skipped, every `_drive` returned `(1, <that
+    message>)`, and the run reported `Ran 13 tests ... FAILED (failures=8)`
+    on all three Windows legs. **Three of the nine behavioural tests PASSED
+    on it**, and they are the more dangerous half: a bash that refuses
+    everything satisfies any test whose whole claim is that the step refused.
+    Measured by reproducing the shape below rather than counted off the log --
+    `test_a_branch_that_is_NOT_on_the_remote_refuses`,
+    `test_a_short_hex_ref_is_not_long_enough_to_be_a_sha` and
+    `test_a_long_ref_that_is_not_hex_is_not_a_sha_either`, each asserting
+    `rc == 1` and no `PIP-CALLED` and nothing else.
+
+    The marker is the load-bearing half rather than the exit code. A shell
+    that exits 0 and produces nothing is equally unusable, and reading the
+    exit code alone is the same is-it-there-or-does-it-work confusion one
+    level down.
+    """
+    for cand in (_bash_candidates() if candidates is None else candidates):
+        if not os.path.exists(cand):
+            continue
+        try:
+            r = subprocess.run([cand, "-c", "echo " + _MARKER],
+                               capture_output=True, text=True,
+                               errors="replace", timeout=60)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if r.returncode == 0 and _MARKER in (r.stdout or ""):
+            return cand
+    return None
+
+
+BASH = _usable_bash()
+
+
 def _drive(ref_file_body, lsremote_out, tmpdir):
     """Run the real step script against a ref file and a canned ls-remote."""
     script = _run_script(WORKFLOW, STEP)
@@ -112,9 +176,22 @@ def _drive(ref_file_body, lsremote_out, tmpdir):
                INPUT_REF="", PYDRC_TOKEN="tok",
                LSREMOTE_OUT=lsremote_out,
                GITHUB_ENV=os.path.join(tmpdir, "env"))
-    r = subprocess.run(["bash", path], cwd=tmpdir, env=env,
-                       capture_output=True, text=True)
-    return r.returncode, r.stdout + r.stderr
+    r = subprocess.run([BASH, path], cwd=tmpdir, env=env,
+                       capture_output=True, text=True, errors="replace")
+    out = r.stdout + r.stderr
+    # THE HARNESS MUST HAVE RUN THE SCRIPT, and nothing asserted that until
+    # `windows-latest` proved it matters. Every path through the step prints
+    # one of these two -- `PyDRC ref requested:` on any non-empty ref, and
+    # `::error::` on the empty one -- so output carrying neither means the
+    # shell never reached the script, whatever it returned. Without this the
+    # five tests expecting a refusal pass on a bash that refuses everything.
+    # `errors="replace"` is a guard: a decode error in an interpreter's own
+    # complaint must not arrive as a test error about the step.
+    assert "PyDRC ref requested:" in out or "::error::" in out, (
+        f"{BASH} produced neither of the step's two unconditional lines, so "
+        f"the script did not run and every assertion below it would be about "
+        f"the shell rather than the step. Output was:\n{out!r}")
+    return r.returncode, out
 
 
 class TestTheStepStillDiscriminates(unittest.TestCase):
@@ -149,9 +226,84 @@ class TestTheStepStillDiscriminates(unittest.TestCase):
         self.assertRegex(self.code, r"tr -d '\[:space:\]' \|\| true\)")
 
 
-@unittest.skipUnless(shutil.which("bash"),
-                     "bash is not on PATH, so the step script cannot be executed "
-                     "here; only the structural assertions above ran")
+class TestTheHarnessPicksAShellThatCanRun(unittest.TestCase):
+    """Structural, and driven against the shape that cost this a red CI run.
+
+    No Windows runner is reachable from here, so what is asserted is not *a
+    claim about Windows* -- it is that the probe rejects a shell of the shape
+    `windows-latest` supplies, driven against a constructed one.
+
+    The fake is PLATFORM-SHAPED on purpose. A `#!/bin/sh` script is not
+    launchable on Windows, so a single POSIX fake would be rejected by the
+    `OSError` arm rather than by the probe -- a pass on the one platform this
+    exists for, arriving by exactly the mechanism being fixed. Each test
+    asserts the fake really is launchable before asserting anything about the
+    probe.
+    """
+
+    def _fake(self, code, chatter):
+        """A launchable stand-in that always exits `code`, saying `chatter`."""
+        import stat, tempfile
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        if os.name == "nt":
+            path = os.path.join(d, "fakebash.bat")
+            body, nl = f"@echo off\r\necho {chatter}\r\nexit /b {code}\r\n", ""
+        else:
+            path = os.path.join(d, "fakebash")
+            body, nl = f"#!/bin/sh\necho {chatter}\nexit {code}\n", "\n"
+        with open(path, "w", encoding="utf-8", newline=nl or None) as fh:
+            fh.write(body)
+        os.chmod(path, os.stat(path).st_mode | stat.S_IEXEC)
+        r = subprocess.run([path, "-c", "echo " + _MARKER], capture_output=True,
+                           text=True, errors="replace", timeout=60)
+        self.assertEqual(code, r.returncode,
+                         f"the fake shell is not launchable here, so the probe "
+                         f"would reject it for the wrong reason: {r!r}")
+        return path
+
+    def test_a_shell_that_refuses_everything_is_not_usable(self):
+        # `windows-latest`'s own shape: `C:\Windows\System32\bash.exe` with no
+        # WSL distribution installed answers every invocation with a complaint
+        # and exits 1. (The real one writes it in UTF-16LE, which is the second
+        # reason the marker cannot be found; the exit code alone settles it.)
+        wsl = self._fake(1, "no-installed-distributions")
+        self.assertIsNone(_usable_bash([wsl]),
+                          "a shell that cannot run a script was accepted, so the "
+                          "class below runs and its refusal tests pass on the "
+                          "refusal of the SHELL rather than of the step")
+
+    def test_a_shell_that_exits_0_and_says_the_wrong_thing_is_not_usable_either(self):
+        # The exit code is not the test. This one succeeds and never echoes
+        # what it was asked to, which drives every assertion in the class below
+        # against output the step did not produce -- and the marker rejects it.
+        quiet = self._fake(0, "nothing-you-asked-for")
+        self.assertIsNone(_usable_bash([quiet]))
+
+    def test_a_working_bash_IS_usable(self):
+        # The complement, or the two above are satisfied by a probe that
+        # rejects everything and skips the whole class for ever.
+        real = shutil.which("bash") or "/bin/bash"
+        if not os.path.exists(real):
+            self.skipTest("no bash on this machine to offer the probe")
+        self.assertEqual(real, _usable_bash([real]))
+
+    def test_git_bash_is_preferred_over_whatever_answers_to_the_name(self):
+        # Actions maps `shell: bash` to Git bash on `windows-latest`, so the
+        # order is a claim about driving the same interpreter the workflow
+        # does -- not a workaround for one bad entry on PATH.
+        order = _bash_candidates()
+        self.assertTrue(order, "the candidate list is empty, so the probe can "
+                               "never find a shell and the class below skips "
+                               "for ever")
+        self.assertTrue(order[0].endswith("bash.exe"),
+                        f"Git bash is no longer tried first: {order}")
+
+
+@unittest.skipUnless(BASH, "no bash here can run a script (tried: "
+                           + ", ".join(_bash_candidates() or ["nothing on PATH"])
+                           + "), so the step script was not executed; only the "
+                             "structural assertions above ran")
 class TestDrivingTheStep(unittest.TestCase):
     """Behavioural. Runs the real `run:` block with git and pip stubbed out."""
 

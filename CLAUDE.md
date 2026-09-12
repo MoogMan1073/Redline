@@ -976,11 +976,16 @@ cause on the one day the account moves.
 asserts the structure on any platform — the shape test exists, the not-a-SHA arm
 exits 1, the ref is taken verbatim in exactly one place and only downstream of
 that test, and the read still carries `|| true` — and **executes the step's real
-`run:` block** where `bash` is on PATH, saying so where it is not. `git` and
-`pip` are shell **functions** prepended to the script rather than stub files on
-PATH: a function needs no directory, no execute bit and no PATH edit, so the
-harness runs the same under Git bash on `windows-latest`, which is the runner
-this repository has been bitten by twice.
+`run:` block** where a bash that can run one is found, saying so where none is.
+`git` and `pip` are shell **functions** prepended to the script rather than stub
+files on PATH: a function needs no directory, no execute bit and no PATH edit,
+so the harness runs the same under Git bash on `windows-latest`, which is the
+runner this repository has been bitten by twice.
+
+*(That paragraph read* "**executes the step's real `run:` block** where `bash`
+is on PATH, saying so where it is not" *until 2026-09-12, and the section below
+is what `windows-latest` said about it. The function-not-a-stub half is intact
+and is what made the fix one line of resolution rather than a rewrite.)*
 
 Falsified four ways, each on its own arm: the old fallback restored (7 tests,
 including the log line claiming a resolution that did not happen), the length
@@ -994,3 +999,78 @@ Verified in both directions, which is the only way to tell a fix from a
 withdrawal: **758 tests across 59 modules, 345 skipped** before, **771 across
 60, 345 skipped** after — the +13 is this module, and the skip reasons are
 identical line for line.
+
+### ...and `shutil.which("bash")` found WSL, so three tests passed on a shell that refuses everything
+
+The paragraph above said the harness *"runs the same under Git bash on
+`windows-latest`"*. It did not, and all three Windows legs went red saying so:
+`Ran 13 tests ... FAILED (failures=8)`, every message quoting
+
+    Windows Subsystem for Linux has no installed distributions.
+
+**`shutil.which("bash")` on that runner finds `C:\Windows\System32\bash.exe`**
+— the WSL launcher, present on every Windows image and useless without a
+distribution installed. It answers *every* invocation with that sentence, in
+UTF-16LE, and exits 1. So the class was not skipped, `_drive` returned
+`(1, <that message>)` every time, and the harness was measuring the shell.
+
+- **THREE OF THE NINE BEHAVIOURAL TESTS PASSED ON IT, and they are the
+  dangerous half.** A bash that refuses everything satisfies any test whose
+  whole claim is that the step refused —
+  `test_a_branch_that_is_NOT_on_the_remote_refuses`,
+  `test_a_short_hex_ref_is_not_long_enough_to_be_a_sha` and
+  `test_a_long_ref_that_is_not_hex_is_not_a_sha_either`, each asserting
+  `rc == 1` and no `PIP-CALLED` and nothing else. Eight failures are loud;
+  three silent passes over a subject that never ran are what this repository
+  is written against.
+- **Found on the runner, not by reading**, which is this file's own recorded
+  shape for the fourth time: green on Linux by construction, because
+  `/bin/bash` is a bash. The same class as the leaked PyMuPDF handle and the
+  `/dev/null` stream — a Windows-only failure the local suite cannot reach.
+- **The fix is a PROBE, not a longer PATH.** `_usable_bash()` runs
+  `bash -c "echo <marker>"` on each candidate and takes the first that exits 0
+  **and prints the marker**. The marker is the load-bearing half: a shell that
+  exits 0 and produces nothing is equally unusable, and reading the exit code
+  alone is the same is-it-there-or-does-it-work confusion one level down.
+- **Git bash is tried FIRST because it is the shell the workflow runs**, not
+  as a fallback. Actions maps `shell: bash` to
+  `C:\Program Files\Git\bin\bash.exe` on `windows-latest`, so the order is
+  what makes this harness drive the same interpreter the step does.
+- **And `_drive` now asserts the script RAN.** Every path through the step
+  prints one of two lines — `PyDRC ref requested:` on any non-empty ref,
+  `::error::` on the empty one — so output carrying neither means the shell
+  never reached the script whatever it returned. That is the assertion the
+  three vacuous passes were missing, and it costs nothing on a working shell.
+
+**The floor is what turns eight confusing failures into eleven named ones**,
+and that is measured rather than argued. Reproducing the runner's shape here —
+a `bash` on PATH that prints a UTF-16LE complaint and exits 1:
+
+| | failures | what a reader sees |
+|---|---|---|
+| floor removed | **8** | the CI board, with three tests still green |
+| floor kept | **11** | every behavioural test fails, each naming the shell |
+
+Falsified five ways, each on its own arm: the probe made permissive (2 tests —
+both fakes accepted), the probe reading the **exit code alone** (1 — which is
+what says the marker is load-bearing rather than belt-and-braces), Git bash no
+longer tried first, and the two rows above.
+
+**No Windows runner is reachable from here**, so what the new class asserts is
+not a claim about Windows — it is that the probe rejects a shell *of the shape
+`windows-latest` supplies*, driven against a constructed one. **The fake is
+platform-shaped, and that is the same defect one level down**: a `#!/bin/sh`
+script is not launchable on Windows, so a single POSIX fake would be rejected
+by the `OSError` arm rather than by the probe — a pass on the one platform this
+exists for, arriving by exactly the mechanism being fixed. Each arm asserts the
+fake really is launchable before asserting anything about the probe.
+
+*(And an arm did not apply, which the exactly-once anchor assertion caught
+rather than reporting as a dead gate: the injection's search string was written
+`"…\\Git\\bin\\bash.exe"` in a non-raw Python string, where `\b` is a
+**backspace**. `\bin` is a real escape and `\Program` is not, so one of the
+two path separators silently became a control character. Raw strings for any
+anchor holding a Windows path.)*
+
+**775 tests across 60 modules, 345 skipped** — the +4 is the probe's own class,
+and the skip reasons are identical line for line.
