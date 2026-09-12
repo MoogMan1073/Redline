@@ -931,3 +931,66 @@ door they do not watch.
 The portfolio-wide sweep is Pathforward's `scripts/transfer_readiness.py`, which
 classifies this repository at **1 gated** — the requirement line, with this test
 named as what keeps it correct.
+
+### ...and the pin was NOT untouched, because a fresh repository has no tags
+
+The bullet above ends *"**The pin itself is untouched.** `packaging/pydrc-ref.txt`
+names a *ref* and is resolved to a SHA before installing; a ref is not an
+account and the move does not touch it."* The first clause is right and the
+conclusion does not follow. **A ref is not an account and the move deletes the
+thing it names**: the repositories are created fresh from `main` — `rm -rf .git`
+and one `Import` commit — so no tag, no history and no release travels, and
+`packaging/pydrc-ref.txt` names **`v0.2.0`**, one of PyDRC's two tags.
+
+**How that fails is the finding, not that it fails.** `git ls-remote` **exits 0
+when it matches nothing** — measured — so an empty answer was the only signal
+that a ref is absent, and the fallback below it read that signal as *"then it
+must be a commit SHA"*. Simulated with the tag gone, the log reads
+
+    PyDRC resolved to: v0.2.0
+
+which is a line saying the resolution succeeded, and pip then fails about
+something else. A fallback written for a legitimate SHA turning *this ref is
+gone* into *assume it is a SHA* is the does-it-fail-or-stop-finding shape this
+file records everywhere else, and the cost is a build that reports the wrong
+cause on the one day the account moves.
+
+- **The discriminator is the ref's own SHAPE**, which is all that is available:
+  hex, and at least seven characters. The false positive is stated because it
+  is real and small — a *branch* named in hex and seven characters or longer
+  (`deadbeef`) that is **absent** reads as a SHA and reaches pip, which fails on
+  its own terms. One that resolves never reaches the test at all.
+- **AND THE EMPTY-REF REFUSAL FIVE LINES ABOVE IT COULD NEVER PRINT.**
+  `set -euo pipefail` plus a `grep` that matches nothing kills the script at the
+  read, so a ref file that is empty, all comments or all whitespace exited **1
+  with no output at all** — measured. The safe half was never in doubt (it does
+  not reach the install); what was missing is the sentence, in a block whose own
+  five-line comment exists to supply it. `|| true` on the read, and the refusal
+  runs.
+- **The pin is deliberately NOT changed here.** Editing it changes which rules
+  the installer contains, which is the question that file exists to answer, so
+  it is a move-day edit recorded in Pathforward's runbook rather than a silent
+  one now.
+
+**Two checks, because one cannot run everywhere.** `tests/test_drc_ref_resolution.py`
+asserts the structure on any platform — the shape test exists, the not-a-SHA arm
+exits 1, the ref is taken verbatim in exactly one place and only downstream of
+that test, and the read still carries `|| true` — and **executes the step's real
+`run:` block** where `bash` is on PATH, saying so where it is not. `git` and
+`pip` are shell **functions** prepended to the script rather than stub files on
+PATH: a function needs no directory, no execute bit and no PATH edit, so the
+harness runs the same under Git bash on `windows-latest`, which is the runner
+this repository has been bitten by twice.
+
+Falsified four ways, each on its own arm: the old fallback restored (7 tests,
+including the log line claiming a resolution that did not happen), the length
+floor dropped, the hex test dropped, and the `|| true` removed. **The third
+fired nothing until a case existed for it** — every other ref in the module is
+either hex or under seven characters, so dropping the hex half alone left all
+thirteen green. *A shape test with two halves needs a case each half does not
+answer*, and only injecting said which.
+
+Verified in both directions, which is the only way to tell a fix from a
+withdrawal: **758 tests across 59 modules, 345 skipped** before, **771 across
+60, 345 skipped** after — the +13 is this module, and the skip reasons are
+identical line for line.
