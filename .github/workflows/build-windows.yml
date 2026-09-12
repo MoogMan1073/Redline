@@ -60,8 +60,13 @@ jobs:
         run: |
           set -euo pipefail
           ref="$INPUT_REF"
+          # `|| true` because `set -euo pipefail` makes a grep that matches
+          # nothing kill the script HERE -- measured, exit 1 with no output at
+          # all -- so the refusal written for that case, five lines below, could
+          # never print. The safe half was never in doubt (it does not reach the
+          # install); what was missing is the sentence saying why.
           if [ -z "$ref" ]; then
-            ref=$(grep -v '^\s*#' packaging/pydrc-ref.txt | grep -v '^\s*$' | head -n1 | tr -d '[:space:]')
+            ref=$(grep -v '^\s*#' packaging/pydrc-ref.txt | grep -v '^\s*$' | head -n1 | tr -d '[:space:]' || true)
           fi
           if [ -z "$ref" ]; then
             # An empty ref is not a harmless default: `git ls-remote <url> ""`
@@ -83,7 +88,35 @@ jobs:
             sha=$(printf '%s\n' "$refs" | awk 'NF {print $1; exit}' || true)
           fi
           if [ -z "$sha" ]; then
-            # Names no ref on the remote, so treat it as a SHA already.
+            # `git ls-remote` EXITS 0 WHEN IT MATCHES NOTHING -- measured --
+            # so an empty answer is the only signal that the ref is not on the
+            # remote. A commit SHA is legitimately unlistable, which is the
+            # whole reason this branch exists; what it must NOT do is answer
+            # both cases the same way. It did: a ref naming a tag that is not
+            # there reached pip as though it were a commit, and the log line
+            # below printed "PyDRC resolved to: v0.2.0" -- a line that reads as
+            # a successful resolution -- before the checkout failed about
+            # something else. A fallback written for a legitimate SHA turning
+            # "this ref is gone" into "assume it is a SHA" is the
+            # does-it-fail-or-stop-finding shape this repository is written
+            # against.
+            #
+            # The discriminator is the ref's own SHAPE, which is all that is
+            # available here: hex, and long enough to be an abbreviation git
+            # would accept. Stated false positive, because it is real and
+            # small -- a BRANCH named in hex and at least seven characters
+            # long (`deadbeef`) is read as a SHA and reaches pip, which then
+            # fails on its own terms. No branch in this portfolio is named
+            # that way.
+            case "$ref" in
+              *[!0-9a-fA-F]* | "" ) ref_is_sha=no ;;
+              * ) [ "${#ref}" -ge 7 ] && ref_is_sha=yes || ref_is_sha=no ;;
+            esac
+            if [ "$ref_is_sha" = no ]; then
+              echo "::error::packaging/pydrc-ref.txt names '$ref', which is neither a branch or tag on ${{ github.repository_owner }}/PyDRC nor a commit SHA. If PyDRC was recreated under a new account its tags did NOT travel -- a fresh repository has no history to hang one on -- so pin a ref that exists there."
+              exit 1
+            fi
+            echo "PyDRC ref '$ref' is not on the remote; it is shaped like a commit SHA, so it is installed as one."
             sha="$ref"
           fi
           echo "PyDRC resolved to: $sha"
